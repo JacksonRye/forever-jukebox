@@ -423,8 +423,8 @@ export class JukeboxEngine {
     return edge && isActiveUserAnchorEdge(edge) ? edge : null;
   }
 
-  private getDefaultAnchorEdge(): Edge | null {
-    if (!this.graph) {
+  getDefaultAnchorEdge(): Edge | null {
+    if (!this.graph || this.graph.lastBranchPoint < 0) {
       return null;
     }
     const anchorSource = this.beats[this.graph.lastBranchPoint];
@@ -436,7 +436,7 @@ export class JukeboxEngine {
     return bestEdge && !bestEdge.deleted ? bestEdge : null;
   }
 
-  private getActiveAnchorEdge(): Edge | null {
+  getActiveAnchorEdge(): Edge | null {
     return this.getUserAnchorEdge() ?? this.getDefaultAnchorEdge();
   }
 
@@ -689,8 +689,10 @@ export class JukeboxEngine {
         const seedIndex = this.wrapBeatIndex(rawSeedIndex, beatsCount);
         chosenIndex = seedIndex;
         if (!this.bringItHomeMode) {
+          const isWrappingAtEnd =
+            currentIndex === beatsCount - 1 && naturalNextIndex === 0;
           const seed = this.beats[seedIndex];
-          if (!this.hasJumpScheduleLead(sourceBoundaryTime)) {
+          if (!isWrappingAtEnd && !this.hasJumpScheduleLead(sourceBoundaryTime)) {
             return {
               boundaryAudioTime,
               chosenIndex: naturalNextIndex,

@@ -48,6 +48,12 @@ type ScheduledCowbellSource = {
   startTime: number;
 };
 
+export type CustomVoiceSample = {
+  id: string;
+  name: string;
+  buffer: AudioBuffer;
+};
+
 export type CowbellOverlayOptions = {
   sampleUrls?: string[];
   walkenSampleUrls?: string[];
@@ -70,6 +76,7 @@ export class CowbellOverlayService {
   private cowbellBuffers: AudioBuffer[] = [];
   private walkenBuffers: AudioBuffer[] = [];
   private trillBuffers: AudioBuffer[] = [];
+  private customSamples: CustomVoiceSample[] = [];
   private loadPromise: Promise<void> | null = null;
   private enabled = false;
   private disposed = false;
@@ -107,6 +114,56 @@ export class CowbellOverlayService {
 
   isEnabled() {
     return this.enabled;
+  }
+
+  addCustomSample(sample: CustomVoiceSample) {
+    const index = this.customSamples.findIndex((s) => s.id === sample.id);
+    if (index >= 0) {
+      this.customSamples[index] = sample;
+    } else {
+      this.customSamples.push(sample);
+    }
+  }
+
+  removeCustomSample(id: string) {
+    this.customSamples = this.customSamples.filter((s) => s.id !== id);
+  }
+
+  getCustomSamples(): CustomVoiceSample[] {
+    return [...this.customSamples];
+  }
+
+  previewSample(sampleOrBuffer: AudioBuffer | string, gain = WALKEN_GAIN) {
+    let buffer: AudioBuffer | null = null;
+    if (typeof sampleOrBuffer === "string") {
+      const found = this.customSamples.find((s) => s.id === sampleOrBuffer);
+      buffer = found?.buffer ?? null;
+    } else {
+      buffer = sampleOrBuffer;
+    }
+    if (!buffer) {
+      return;
+    }
+    this.scheduleBuffer(buffer, this.context.currentTime, gain);
+  }
+
+  triggerVoiceSample(now = this.context.currentTime): boolean {
+    if (
+      this.customSamples.length > 0 &&
+      (this.walkenBuffers.length === 0 || this.random() < 0.65)
+    ) {
+      const chosen = this.chooseBuffer(this.customSamples.map((s) => s.buffer));
+      if (chosen) {
+        this.scheduleBuffer(chosen, now, WALKEN_GAIN);
+        return true;
+      }
+    }
+    const walken = this.chooseBuffer(this.walkenBuffers);
+    if (walken) {
+      this.scheduleBuffer(walken, now, WALKEN_GAIN);
+      return true;
+    }
+    return false;
   }
 
   setVolume(value: number) {
@@ -182,6 +239,7 @@ export class CowbellOverlayService {
     this.cowbellBuffers = [];
     this.walkenBuffers = [];
     this.trillBuffers = [];
+    this.customSamples = [];
     this.loadPromise = null;
     try {
       this.masterGain.disconnect();
@@ -291,10 +349,29 @@ export class CowbellOverlayService {
     startTime: number,
     beatIndex: number,
   ) {
-    if (!this.sectionStartBeatIndices.has(beatIndex)) {
+    const isSectionStart = this.sectionStartBeatIndices.has(beatIndex);
+    const isPeriodicDrop =
+      this.customSamples.length > 0 &&
+      beatIndex > 0 &&
+      beatIndex % 32 === 0 &&
+      this.random() < 0.45;
+
+    if (!isSectionStart && !isPeriodicDrop) {
       return;
     }
-    if (this.random() < WALKEN_EFFECT_PROBABILITY) {
+
+    if (this.random() < WALKEN_EFFECT_PROBABILITY || isPeriodicDrop) {
+      if (
+        this.customSamples.length > 0 &&
+        (this.walkenBuffers.length === 0 || isPeriodicDrop || this.random() < 0.65)
+      ) {
+        const chosen = this.chooseBuffer(this.customSamples.map((s) => s.buffer));
+        if (chosen) {
+          this.scheduleBuffer(chosen, startTime, WALKEN_GAIN);
+          return;
+        }
+      }
+
       const walken = this.chooseBuffer(this.walkenBuffers);
       if (walken) {
         this.scheduleBuffer(

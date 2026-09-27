@@ -211,7 +211,13 @@ export function shouldRandomBranch(
   state: BranchState,
   suppressDefaultAnchor = false
 ): boolean {
-  if (!suppressDefaultAnchor && q.which === graph.lastBranchPoint) {
+  if (
+    !suppressDefaultAnchor &&
+    graph.lastBranchPoint >= 0 &&
+    (q.which === graph.lastBranchPoint ||
+      (q.which > graph.lastBranchPoint &&
+        q.neighbors.some((edge) => edge.dest.which < q.which)))
+  ) {
     return true;
   }
   // Gradually increase branch chance by elapsed musical time (not raw beat
@@ -282,7 +288,13 @@ export function selectNextBeatIndex(
   if (userAnchorIndex >= 0) {
     const selected = seed.neighbors.splice(userAnchorIndex, 1);
     nextEdge = selected[0];
-  } else if (userAnchor === null && seed.which === graph.lastBranchPoint) {
+  } else if (
+    userAnchor === null &&
+    graph.lastBranchPoint >= 0 &&
+    (seed.which === graph.lastBranchPoint ||
+      (seed.which > graph.lastBranchPoint &&
+        seed.neighbors.some((edge) => edge.dest.which < seed.which)))
+  ) {
     const bestIndex = getBestLastBranchNeighborIndex(seed);
     const selected = seed.neighbors.splice(bestIndex, 1);
     nextEdge = selected[0];
@@ -292,6 +304,7 @@ export function selectNextBeatIndex(
       rng,
       state,
       candidateIndexes,
+      graph.lastBranchPoint > 0 ? graph.lastBranchPoint : undefined,
     );
     if (selectedIndex < 0) {
       return { index: seed.which, jumped: false };
@@ -316,9 +329,18 @@ function selectWeightedNeighborIndex(
   rng: () => number,
   state: BranchState,
   candidateIndexes?: number[],
+  maxDestinationIndex?: number,
 ): number {
-  const indexes =
+  let indexes =
     candidateIndexes ?? seed.neighbors.map((_edge, index) => index);
+  if (maxDestinationIndex !== undefined && candidateIndexes === undefined) {
+    const safeIndexes = indexes.filter(
+      (idx) => seed.neighbors[idx].dest.which <= maxDestinationIndex,
+    );
+    if (safeIndexes.length > 0) {
+      indexes = safeIndexes;
+    }
+  }
   if (indexes.length <= 1) {
     return indexes[0] ?? -1;
   }

@@ -16,8 +16,9 @@ const ALL_MODES = Object.keys(AUDIO_MODE_SETTINGS) as JukeboxAudioMode[];
 
 describe("clampAudioModeIntensity", () => {
   it("clamps to the supported range", () => {
-    expect(clampAudioModeIntensity(49)).toBe(MIN_AUDIO_MODE_INTENSITY);
+    expect(clampAudioModeIntensity(-5)).toBe(MIN_AUDIO_MODE_INTENSITY);
     expect(clampAudioModeIntensity(151)).toBe(MAX_AUDIO_MODE_INTENSITY);
+    expect(clampAudioModeIntensity(0)).toBe(0);
     expect(clampAudioModeIntensity(50)).toBe(50);
     expect(clampAudioModeIntensity(150)).toBe(150);
   });
@@ -50,6 +51,14 @@ describe("scaleAudioModeSettings", () => {
     for (const mode of ALL_MODES) {
       const settings = AUDIO_MODE_SETTINGS[mode];
       expect(scaleAudioModeSettings(settings, 100)).toBe(settings);
+    }
+  });
+
+  it("returns off settings at 0% intensity", () => {
+    for (const mode of ["nightcore", "daycore", "vaporwave"] as const) {
+      expect(scaleAudioModeSettings(AUDIO_MODE_SETTINGS[mode], 0)).toEqual(
+        AUDIO_MODE_SETTINGS.off,
+      );
     }
   });
 

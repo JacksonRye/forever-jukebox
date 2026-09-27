@@ -122,6 +122,9 @@ vi.mock("@/core/infrastructure/cache/analysisCache", () => ({
   createAnalysisCache: () => ({}),
   getAnalysisCacheBytes: vi.fn(async () => 12.5 * 1024 * 1024),
   clearAllAnalysisCache: vi.fn(async () => {}),
+  setCachedAudio: vi.fn(async () => {}),
+  getCachedAudio: vi.fn(async () => null),
+  deleteCachedAudio: vi.fn(async () => {}),
 }));
 
 vi.mock("@/core/application/usecases/analyzeAudio", () => ({
@@ -172,6 +175,19 @@ vi.mock("@forever-jukebox/shared/audio/BufferedAudioPlayer", () => ({
     getSourceBuffer() {
       return {} as AudioBuffer;
     }
+    getActiveBuffer() {
+      return {} as AudioBuffer;
+    }
+    getSourceChainInput() {
+      return {
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+      } as unknown as GainNode;
+    }
+    setExternalPlaying = vi.fn();
+    isExternalPlaying() {
+      return false;
+    }
     stop = vi.fn();
     seek = vi.fn((_time: number) => undefined);
     isPlaying() {
@@ -217,6 +233,11 @@ vi.mock("@forever-jukebox/shared/audio/CowbellOverlayService", () => ({
     setSectionStartBeatIndices = vi.fn();
     cancelScheduledHits = vi.fn();
     handleBeatEnter = vi.fn();
+    addCustomSample = vi.fn();
+    removeCustomSample = vi.fn();
+    getCustomSamples = vi.fn(() => []);
+    previewSample = vi.fn();
+    triggerVoiceSample = vi.fn(() => true);
     dispose = vi.fn();
   },
 }));
@@ -284,6 +305,7 @@ vi.mock("@forever-jukebox/shared", async (importOriginal) => ({
     setUserAnchorEdge = vi.fn();
     getUserAnchorEdgeId = vi.fn(() => null);
     getUserAnchorEdge = vi.fn(() => null);
+    getActiveAnchorEdge = vi.fn(() => null);
     deleteEdge = vi.fn();
     rebuildGraph = vi.fn();
     clearDeletedEdges = vi.fn();
@@ -392,8 +414,16 @@ vi.mock("@forever-jukebox/shared/autocanonizer/AutocanonizerController", () => (
     setStreamPans = vi.fn(
       (_mainPan: number, _otherPan: number) => undefined,
     );
+    setPlaybackRate = vi.fn((_rate: number) => undefined);
+    getPlaybackRate = vi.fn(() => 1);
+    setAudioBuffer = vi.fn((_buffer: AudioBuffer) => undefined);
+    setDestination = vi.fn((_node: AudioNode) => undefined);
+    setOnPlaybackStateChange = vi.fn(
+      (_handler: ((isPlaying: boolean) => void) | null) => undefined,
+    );
+    isPlaying = vi.fn(() => false);
     setAudio = vi.fn(
-      (_buffer: AudioBuffer | null, _context: AudioContext | null) => undefined,
+      (_buffer: AudioBuffer | null, _context: AudioContext | null, _destination?: AudioNode | null) => undefined,
     );
     setAnalysis = vi.fn(
       (_analysis: unknown, _durationOverride?: number | null) => undefined,

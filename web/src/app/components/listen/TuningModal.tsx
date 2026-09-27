@@ -444,7 +444,14 @@ export function TuningModal() {
                       max={MAX_AUDIO_MODE_INTENSITY}
                       step={5}
                       value={extras.audioIntensity}
-                      onChange={(value) => setExtrasField("audioIntensity", value)}
+                      onChange={(value) => {
+                        if (value === 0) {
+                          setExtrasField("audioMode", "off");
+                          setExtrasField("audioIntensity", 0);
+                        } else {
+                          setExtrasField("audioIntensity", value);
+                        }
+                      }}
                     />
                   ) : null}
                 </div>

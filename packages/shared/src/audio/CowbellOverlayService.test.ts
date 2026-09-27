@@ -219,4 +219,39 @@ describe("CowbellOverlayService", () => {
     expect(context.createdSources[0]?.start).toHaveBeenCalledWith(0);
     expect(context.createdSources[1]?.start).toHaveBeenCalledWith(0);
   });
+
+  it("supports adding, previewing, and playing custom voice samples in real time", async () => {
+    const context = new MockAudioContext();
+    const service = new CowbellOverlayService(context as unknown as AudioContext, {
+      fetch: createFetch(),
+      random: createRandom([0.5, 0.1, 0.5]),
+      sampleUrls: ["/cowbell.wav"],
+      walkenSampleUrls: [],
+      trillSampleUrls: [],
+    });
+
+    const mockBuffer = { duration: 2.0 } as AudioBuffer;
+    service.addCustomSample({
+      id: "custom-1",
+      name: "my_voice_drop.wav",
+      buffer: mockBuffer,
+    });
+
+    expect(service.getCustomSamples()).toHaveLength(1);
+    expect(service.getCustomSamples()[0]?.name).toBe("my_voice_drop.wav");
+
+    // Preview sample
+    service.previewSample("custom-1");
+    expect(context.createdSources.length).toBeGreaterThanOrEqual(1);
+    expect(context.createdSources[context.createdSources.length - 1]?.buffer).toBe(mockBuffer);
+
+    // Trigger sample
+    const triggered = service.triggerVoiceSample();
+    expect(triggered).toBe(true);
+
+    // Remove sample
+    service.removeCustomSample("custom-1");
+    expect(service.getCustomSamples()).toHaveLength(0);
+  });
 });
+

@@ -121,7 +121,7 @@ export const AUDIO_MODE_SETTINGS: Record<JukeboxAudioMode, AudioModeSettings> = 
   },
 };
 
-export const MIN_AUDIO_MODE_INTENSITY = 50;
+export const MIN_AUDIO_MODE_INTENSITY = 0;
 export const MAX_AUDIO_MODE_INTENSITY = 150;
 export const DEFAULT_AUDIO_MODE_INTENSITY = 100;
 
@@ -150,6 +150,9 @@ export function scaleAudioModeSettings(
   intensityPct: number,
 ): AudioModeSettings {
   const clamped = clampAudioModeIntensity(intensityPct);
+  if (clamped === 0) {
+    return AUDIO_MODE_SETTINGS.off;
+  }
   if (clamped === DEFAULT_AUDIO_MODE_INTENSITY) {
     // Same reference guarantees 100% is bit-for-bit today's preset.
     return settings;

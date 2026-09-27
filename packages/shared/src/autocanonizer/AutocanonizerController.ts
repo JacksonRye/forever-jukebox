@@ -27,6 +27,8 @@ export type AutocanonizerCursorTimes = {
 class AutocanonizerPlayer {
   private readonly context: AudioContext;
   private buffer: AudioBuffer;
+  private destinationNode: AudioNode;
+  private playbackRate = 1;
   private readonly mainGain: GainNode;
   private readonly otherGain: GainNode;
   private readonly mainPanner: StereoPannerNode | null;
@@ -45,9 +47,15 @@ class AutocanonizerPlayer {
   private skewDelta = 0;
   private readonly maxSkewDelta = 0.05;
 
-  constructor(context: AudioContext, buffer: AudioBuffer, masterBlend = 0.55) {
+  constructor(
+    context: AudioContext,
+    buffer: AudioBuffer,
+    destinationNode?: AudioNode,
+    masterBlend = 0.55,
+  ) {
     this.context = context;
     this.buffer = buffer;
+    this.destinationNode = destinationNode ?? this.context.destination;
     this.masterBlend = masterBlend;
     this.mainGain = this.context.createGain();
     this.otherGain = this.context.createGain();
@@ -65,10 +73,51 @@ class AutocanonizerPlayer {
     if (this.otherPanner) {
       this.otherPanner.connect(this.otherGain);
     }
-    this.mainGain.connect(this.context.destination);
-    this.otherGain.connect(this.context.destination);
+    this.mainGain.connect(this.destinationNode);
+    this.otherGain.connect(this.destinationNode);
     this.applyGains();
     this.applyPans();
+  }
+
+  setDestination(destination: AudioNode) {
+    if (this.destinationNode === destination) {
+      return;
+    }
+    try {
+      this.mainGain.disconnect();
+      this.otherGain.disconnect();
+    } catch {
+      // no-op
+    }
+    this.destinationNode = destination;
+    this.mainGain.connect(this.destinationNode);
+    this.otherGain.connect(this.destinationNode);
+  }
+
+  setPlaybackRate(rate: number) {
+    const validRate = Number.isFinite(rate) && rate > 0 ? rate : 1;
+    if (this.playbackRate === validRate) {
+      return;
+    }
+    this.playbackRate = validRate;
+    if (this.mainSource) {
+      try {
+        this.mainSource.playbackRate.value = this.playbackRate;
+      } catch {
+        // no-op
+      }
+    }
+    if (this.otherSource) {
+      try {
+        this.otherSource.playbackRate.value = this.playbackRate;
+      } catch {
+        // no-op
+      }
+    }
+  }
+
+  getPlaybackRate(): number {
+    return this.playbackRate;
   }
 
   setBuffer(buffer: AudioBuffer) {
@@ -142,10 +191,12 @@ class AutocanonizerPlayer {
         duration,
         this.mainPanner ?? this.mainGain,
       );
-      this.deltaTime = this.context.currentTime - beat.start;
+      this.deltaTime =
+        this.context.currentTime - beat.start / this.playbackRate;
     }
 
-    const now = this.context.currentTime - this.deltaTime;
+    const elapsed = this.context.currentTime - this.deltaTime;
+    const now = elapsed * this.playbackRate;
     const delta = now - beat.start;
     const clampedOtherGain = Math.max(0, Math.min(1, beat.otherGain));
 
@@ -165,11 +216,12 @@ class AutocanonizerPlayer {
         duration,
         this.otherPanner ?? this.otherGain,
       );
-      this.otherDeltaTime = this.context.currentTime - beat.other.start;
+      this.otherDeltaTime =
+        this.context.currentTime - beat.other.start / this.playbackRate;
     }
     this.skewDelta += beat.duration - beat.other.duration;
     this.currentBeat = beat;
-    return beat.duration - delta;
+    return (beat.duration - delta) / this.playbackRate;
   }
 
   playOtherOnly(beat: CanonizerBeat) {
@@ -189,17 +241,20 @@ class AutocanonizerPlayer {
         duration,
         this.otherPanner ?? this.otherGain,
       );
-      this.otherDeltaTime = this.context.currentTime - beat.start;
+      this.otherDeltaTime =
+        this.context.currentTime - beat.start / this.playbackRate;
     }
-    const now = this.context.currentTime - this.otherDeltaTime;
+    const elapsed = this.context.currentTime - this.otherDeltaTime;
+    const now = elapsed * this.playbackRate;
     const delta = now - beat.start;
     this.currentBeat = beat;
-    return beat.duration - delta;
+    return (beat.duration - delta) / this.playbackRate;
   }
 
   private playBuffer(start: number, duration: number, destination: AudioNode) {
     const source = this.context.createBufferSource();
     source.buffer = this.buffer;
+    source.playbackRate.value = this.playbackRate;
     source.connect(destination);
     source.start(0, start, Math.max(0, duration));
     return source;
@@ -246,6 +301,9 @@ export class AutocanonizerController {
     | null = null;
   private onEnded: (() => void) | null = null;
   private onSelect: ((index: number) => void) | null = null;
+  private onPlaybackStateChange: ((isPlaying: boolean) => void) | null = null;
+  private playbackRate = 1;
+  private destinationNode: AudioNode | null = null;
 
   constructor(container: HTMLElement) {
     this.viz = new AutocanonizerViz(container);
@@ -283,6 +341,14 @@ export class AutocanonizerController {
     this.onSelect = handler;
   }
 
+  setOnPlaybackStateChange(handler: ((isPlaying: boolean) => void) | null) {
+    this.onPlaybackStateChange = handler;
+  }
+
+  isPlaying() {
+    return this.running;
+  }
+
   // When enabled, the main cursor stops at the final beat and the trailing
   // other cursor plays out to the end. When disabled (the default), the track
   // loops back to the first beat and repeats.
@@ -302,13 +368,47 @@ export class AutocanonizerController {
     this.player?.setStreamPans(this.mainStreamPan, this.otherStreamPan);
   }
 
-  setAudio(buffer: AudioBuffer | null, context: AudioContext | null) {
+  setPlaybackRate(rate: number) {
+    this.playbackRate = Number.isFinite(rate) && rate > 0 ? rate : 1;
+    this.player?.setPlaybackRate(this.playbackRate);
+  }
+
+  getPlaybackRate(): number {
+    return this.player?.getPlaybackRate() ?? this.playbackRate;
+  }
+
+  setAudioBuffer(buffer: AudioBuffer) {
+    this.player?.setBuffer(buffer);
+  }
+
+  setDestination(destinationNode: AudioNode) {
+    this.destinationNode = destinationNode;
+    this.player?.setDestination(destinationNode);
+  }
+
+  setAudio(
+    buffer: AudioBuffer | null,
+    context: AudioContext | null,
+    destinationNode?: AudioNode | null,
+  ) {
+    if (destinationNode !== undefined) {
+      this.destinationNode = destinationNode;
+    }
     if (buffer && context) {
       if (!this.player) {
-        this.player = new AutocanonizerPlayer(context, buffer);
+        this.player = new AutocanonizerPlayer(
+          context,
+          buffer,
+          this.destinationNode ?? undefined,
+        );
         this.player.setStreamPans(this.mainStreamPan, this.otherStreamPan);
+        this.player.setPlaybackRate(this.playbackRate);
       } else {
         this.player.setBuffer(buffer);
+        if (this.destinationNode) {
+          this.player.setDestination(this.destinationNode);
+        }
+        this.player.setPlaybackRate(this.playbackRate);
       }
     } else {
       this.player = null;
@@ -395,6 +495,7 @@ export class AutocanonizerController {
     }
     this.stop();
     this.running = true;
+    this.onPlaybackStateChange?.(true);
     this.secondaryOnly = false;
     this.currentIndex = Math.max(0, Math.min(index, this.beats.length - 1));
     this.player.reset();
@@ -409,6 +510,7 @@ export class AutocanonizerController {
       return;
     }
     this.running = false;
+    this.onPlaybackStateChange?.(false);
     this.secondaryOnly = false;
     if (this.timerId !== null) {
       backgroundClearTimeout(this.timerId);
@@ -425,11 +527,13 @@ export class AutocanonizerController {
     }
     if (!this.player || !this.beats.length) {
       this.running = false;
+      this.onPlaybackStateChange?.(false);
       this.onEnded?.();
       return;
     }
     if (this.currentIndex >= this.beats.length) {
       this.running = false;
+      this.onPlaybackStateChange?.(false);
       this.onEnded?.();
       return;
     }

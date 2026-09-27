@@ -3,7 +3,9 @@ import { AnalysisOutput } from "@/shared/analysis-schema";
 import { clearAllTuning, removeTuning } from "./tuningStore";
 
 const DB_NAME = "forever-jukebox-pwa";
+const DB_VERSION = 2;
 const STORE_NAME = "analysis";
+const AUDIO_STORE_NAME = "audio";
 let analysisDbPromise: Promise<IDBDatabase> | null = null;
 
 type CacheBackend = AnalysisCachePort;
@@ -35,16 +37,27 @@ export async function getAnalysisCacheBytes(): Promise<number> {
 export async function clearAllAnalysisCache(): Promise<void> {
   if (isOpfsAvailable()) {
     await clearAllOpfsAnalysis();
+    try {
+      const root = await navigator.storage.getDirectory();
+      await root.removeEntry("audio", { recursive: true });
+    } catch {
+      // ignore
+    }
   } else {
     await clearAllIndexedDbAnalysis();
+  }
+  try {
+    await withAudioStore("readwrite", (store) => store.clear());
+  } catch {
+    // ignore
   }
   clearAllTuning();
 }
 
-// Remove a single cached analysis along with its auto-saved tuning. Kept beside
-// clearAllAnalysisCache so analysis + tuning removal stay in one place.
+// Remove a single cached analysis along with its auto-saved tuning and cached audio.
 export async function deleteCachedAnalysis(fingerprint: string): Promise<void> {
   await createAnalysisCache().clear(fingerprint);
+  await deleteCachedAudio(fingerprint);
   removeTuning(fingerprint);
 }
 
@@ -126,11 +139,14 @@ function sortCachedTracks(
 async function openAnalysisDb(): Promise<IDBDatabase> {
   if (!analysisDbPromise) {
     analysisDbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, 1);
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           db.createObjectStore(STORE_NAME);
+        }
+        if (!db.objectStoreNames.contains(AUDIO_STORE_NAME)) {
+          db.createObjectStore(AUDIO_STORE_NAME);
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -148,6 +164,20 @@ async function withStore<T>(
   return new Promise<T>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, mode);
     const store = tx.objectStore(STORE_NAME);
+    const request = fn(store);
+    request.onsuccess = () => resolve(request.result as T);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed"));
+  });
+}
+
+async function withAudioStore<T>(
+  mode: IDBTransactionMode,
+  fn: (store: IDBObjectStore) => IDBRequest<T>
+): Promise<T> {
+  const db = await openAnalysisDb();
+  return new Promise<T>((resolve, reject) => {
+    const tx = db.transaction(AUDIO_STORE_NAME, mode);
+    const store = tx.objectStore(AUDIO_STORE_NAME);
     const request = fn(store);
     request.onsuccess = () => resolve(request.result as T);
     request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed"));
@@ -347,5 +377,147 @@ class IndexedDbAnalysisCache implements CacheBackend {
 
   async clear(fingerprint: string): Promise<void> {
     await withStore("readwrite", (store) => store.delete(fingerprint));
+  }
+}
+
+export type CachedAudioPayload = {
+  blob: Blob;
+  name: string;
+  type: string;
+  lastModified: number;
+};
+
+export async function setCachedAudio(
+  fingerprint: string,
+  file: File | Blob,
+  customName?: string,
+  customType?: string,
+  customLastModified?: number,
+): Promise<void> {
+  const name =
+    customName || (file instanceof File ? file.name : "track.mp3");
+  const type = customType || file.type || "audio/mpeg";
+  const lastModified =
+    customLastModified ||
+    (file instanceof File ? file.lastModified : Date.now());
+
+  if (isOpfsAvailable()) {
+    try {
+      const root = await navigator.storage.getDirectory();
+      const dir = await root.getDirectoryHandle("audio", { create: true });
+      const handle = await dir.getFileHandle(`${fingerprint}.bin`, {
+        create: true,
+      });
+      const writable = await handle.createWritable();
+      const arrayBuffer = await file.arrayBuffer();
+      await writable.write(arrayBuffer);
+      await writable.close();
+
+      const metaHandle = await dir.getFileHandle(
+        `${fingerprint}.meta.json`,
+        { create: true },
+      );
+      const metaWritable = await metaHandle.createWritable();
+      await metaWritable.write(
+        JSON.stringify({
+          name,
+          type,
+          lastModified,
+        }),
+      );
+      await metaWritable.close();
+      return;
+    } catch (err) {
+      console.warn("OPFS audio cache write failed, falling back to IndexedDB:", err);
+    }
+  }
+
+  try {
+    const record: CachedAudioPayload = {
+      blob: file,
+      name,
+      type,
+      lastModified,
+    };
+    await withAudioStore("readwrite", (store) => store.put(record, fingerprint));
+  } catch (err) {
+    console.warn("IndexedDB audio cache write failed:", err);
+  }
+}
+
+export async function getCachedAudio(
+  fingerprint: string,
+): Promise<File | null> {
+  if (isOpfsAvailable()) {
+    try {
+      const root = await navigator.storage.getDirectory();
+      const dir = await root.getDirectoryHandle("audio");
+      const handle = await dir.getFileHandle(`${fingerprint}.bin`);
+      const rawFile = await handle.getFile();
+      let name = "track.mp3";
+      let type = "audio/mpeg";
+      let lastModified = Date.now();
+      try {
+        const metaHandle = await dir.getFileHandle(`${fingerprint}.meta.json`);
+        const metaFile = await metaHandle.getFile();
+        const meta = JSON.parse(await metaFile.text()) as {
+          name?: string;
+          type?: string;
+          lastModified?: number;
+        };
+        if (meta.name) name = meta.name;
+        if (meta.type) type = meta.type;
+        if (meta.lastModified) lastModified = meta.lastModified;
+      } catch {
+        // use fallback metadata
+      }
+      return new File([rawFile], name, { type, lastModified });
+    } catch {
+      // not in OPFS, fallback to IndexedDB
+    }
+  }
+
+  try {
+    const val = await withAudioStore<
+      CachedAudioPayload | File | Blob | undefined
+    >("readonly", (store) => store.get(fingerprint));
+    if (!val) {
+      return null;
+    }
+    if (val instanceof File) {
+      return val;
+    }
+    if (val instanceof Blob) {
+      return new File([val], "track.mp3", {
+        type: val.type || "audio/mpeg",
+      });
+    }
+    if (val.blob) {
+      return new File([val.blob], val.name || "track.mp3", {
+        type: val.type || "audio/mpeg",
+        lastModified: val.lastModified || Date.now(),
+      });
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteCachedAudio(fingerprint: string): Promise<void> {
+  if (isOpfsAvailable()) {
+    try {
+      const root = await navigator.storage.getDirectory();
+      const dir = await root.getDirectoryHandle("audio");
+      await dir.removeEntry(`${fingerprint}.bin`);
+      await dir.removeEntry(`${fingerprint}.meta.json`);
+    } catch {
+      // ignore
+    }
+  }
+  try {
+    await withAudioStore("readwrite", (store) => store.delete(fingerprint));
+  } catch {
+    // ignore
   }
 }

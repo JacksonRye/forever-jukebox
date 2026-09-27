@@ -209,4 +209,62 @@ describe("AutocanonizerController", () => {
       otherSeconds: 10,
     });
   });
+
+  it("routes gain nodes to custom destinationNode and updates destination", () => {
+    const controller = new AutocanonizerController({} as HTMLElement);
+    const { context, gains } = createAudioContext();
+    const customDestination = { tag: "custom-chain" } as unknown as AudioNode;
+
+    controller.setAudio({ duration: 30 } as AudioBuffer, context, customDestination);
+
+    expect(gains[0].connect).toHaveBeenCalledWith(customDestination);
+    expect(gains[1].connect).toHaveBeenCalledWith(customDestination);
+
+    const nextDestination = { tag: "next-chain" } as unknown as AudioNode;
+    controller.setDestination(nextDestination);
+
+    expect(gains[0].connect).toHaveBeenCalledWith(nextDestination);
+    expect(gains[1].connect).toHaveBeenCalledWith(nextDestination);
+  });
+
+  it("sets and gets playbackRate on controller", () => {
+    const controller = new AutocanonizerController({} as HTMLElement);
+    const { context } = createAudioContext();
+    controller.setAudio({ duration: 30 } as AudioBuffer, context);
+
+    controller.setPlaybackRate(1.25);
+    expect(controller.getPlaybackRate()).toBe(1.25);
+
+    controller.setPlaybackRate(0); // Clamped / fallback to 1
+    expect(controller.getPlaybackRate()).toBe(1);
+  });
+
+  it("emits onPlaybackStateChange on start and stop", () => {
+    const controller = new AutocanonizerController({} as HTMLElement);
+    const beat = createBeat(0, 0);
+    const player = {
+      reset: vi.fn(),
+      stop: vi.fn(),
+      playBeat: vi.fn(() => 1),
+    };
+    const inner = controller as unknown as {
+      beats: CanonizerBeat[];
+      player: typeof player;
+    };
+    inner.beats = [beat];
+    inner.player = player;
+
+    const stateChanges: boolean[] = [];
+    controller.setOnPlaybackStateChange((isPlaying) => {
+      stateChanges.push(isPlaying);
+    });
+
+    controller.startAtIndex(0);
+    expect(controller.isPlaying()).toBe(true);
+
+    controller.stop();
+    expect(controller.isPlaying()).toBe(false);
+
+    expect(stateChanges).toEqual([true, false]);
+  });
 });

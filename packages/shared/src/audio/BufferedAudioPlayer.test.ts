@@ -403,8 +403,8 @@ describe("BufferedAudioPlayer", () => {
     const player = new BufferedAudioPlayer();
     player.setJukeboxAudioModeIntensity(500);
     expect(player.getJukeboxAudioModeIntensity()).toBe(150);
-    player.setJukeboxAudioModeIntensity(0);
-    expect(player.getJukeboxAudioModeIntensity()).toBe(50);
+    player.setJukeboxAudioModeIntensity(-10);
+    expect(player.getJukeboxAudioModeIntensity()).toBe(0);
   });
 
   it("builds lofi chain with bandpass filter", async () => {

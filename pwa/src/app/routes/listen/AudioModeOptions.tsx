@@ -90,7 +90,15 @@ function AudioModeSectionGroup({
             step={5}
             value={intensityPct}
             disabled={disabled}
-            onChange={(event) => onIntensityChange(Number(event.target.value))}
+            onChange={(event) => {
+              const val = Number(event.target.value);
+              if (val === 0) {
+                onChange("off");
+                onIntensityChange(0);
+              } else {
+                onIntensityChange(val);
+              }
+            }}
           />
         </label>
       ) : null}
@@ -104,12 +112,14 @@ export function AudioModeOptions({
   onChange,
   intensityPct,
   onIntensityChange,
+  onOpenCustomSamples,
 }: {
   selectedAudioMode: JukeboxAudioMode;
   disabled: boolean;
   onChange: (mode: JukeboxAudioMode) => void;
   intensityPct: number;
   onIntensityChange: (intensityPct: number) => void;
+  onOpenCustomSamples?: () => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -136,6 +146,18 @@ export function AudioModeOptions({
           onIntensityChange={onIntensityChange}
         />
       ))}
+      {selectedAudioMode === "cowbell" && onOpenCustomSamples && (
+        <div style={{ marginTop: "10px", display: "flex", justifyContent: "flex-start" }}>
+          <button
+            type="button"
+            className="gs-btn-samples-header"
+            onClick={onOpenCustomSamples}
+            title="Add or manage custom voice samples"
+          >
+            <span>🎤 MANAGE CUSTOM VOICE SAMPLES</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

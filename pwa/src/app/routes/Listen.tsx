@@ -3,7 +3,10 @@ import "@/app/i18n";
 import { Link } from "react-router-dom";
 import { AnalysisWorkerClient } from "@/core/infrastructure/analysis/AnalysisWorkerClient";
 import { AudioDecoder } from "@/core/infrastructure/audio/AudioDecoder";
-import { createAnalysisCache } from "@/core/infrastructure/cache/analysisCache";
+import {
+  createAnalysisCache,
+  setCachedAudio,
+} from "@/core/infrastructure/cache/analysisCache";
 import {
   loadTuning,
   removeTuning,
@@ -88,6 +91,9 @@ import { SettingsModal } from "./listen/SettingsModal";
 import { StatusPanel } from "./listen/StatusPanel";
 import { TuningModal } from "./listen/TuningModal";
 import { VizInfo } from "./listen/VizInfo";
+import { AudioModeSuite } from "@/ui/components/AudioModeSuite";
+import { CustomSampleModal } from "@/ui/components/CustomSampleModal";
+import { getStoredCustomSamples } from "@/core/infrastructure/cache/customSampleStore";
 import { VizTop } from "./listen/VizTop";
 import { VolumePopover } from "./listen/VolumePopover";
 import { useAudioExport } from "./listen/useAudioExport";
@@ -103,11 +109,22 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
     setIsListenLoading,
     isSettingsOpen,
     setIsSettingsOpen,
+    audioMode: globalAudioMode,
+    setAudioMode: setGlobalAudioMode,
+    audioIntensity: globalAudioIntensity,
+    setAudioIntensity: setGlobalAudioIntensity,
+    bringItHomeMode: globalBringItHomeMode,
+    setBringItHomeMode: setGlobalBringItHomeMode,
+    branchStatsEnabled: globalBranchStatsEnabled,
+    setBranchStatsEnabled: setGlobalBranchStatsEnabled,
   } = useAppState();
-  const initialAudioMode = React.useMemo(() => resolveAudioModeFromUrl(), []);
+  const initialAudioMode = React.useMemo(
+    () => globalAudioMode ?? resolveAudioModeFromUrl(),
+    [globalAudioMode],
+  );
   const initialAudioIntensity = React.useMemo(
-    () => resolveAudioIntensityFromUrl(),
-    [],
+    () => globalAudioIntensity ?? resolveAudioIntensityFromUrl(),
+    [globalAudioIntensity],
   );
   const [analysis, setAnalysis] = React.useState<AnalysisOutput | null>(null);
   const [readyFileKey, setReadyFileKey] = React.useState<string | null>(null);
@@ -139,9 +156,11 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
   const [theme, setTheme] = React.useState<ThemeName>(() =>
     resolveStoredTheme(),
   );
-  const [bringItHomeMode, setBringItHomeMode] = React.useState(false);
+  const [bringItHomeMode, setBringItHomeMode] = React.useState(
+    () => globalBringItHomeMode ?? false,
+  );
   const [branchStatsEnabled, setBranchStatsEnabled] = React.useState<boolean>(
-    () => resolveStoredBranchStatsEnabled(),
+    () => globalBranchStatsEnabled ?? resolveStoredBranchStatsEnabled(),
   );
   const [jukeboxAudioMode, setJukeboxAudioMode] =
     React.useState<JukeboxAudioMode>(initialAudioMode);
@@ -152,6 +171,8 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
   const [swingProgress, setSwingProgress] = React.useState(0);
   const [tuningActiveTab, setTuningActiveTab] =
     React.useState<TuningModalTab>("tuning");
+  const [isCustomSamplesOpen, setIsCustomSamplesOpen] = React.useState(false);
+  const [customSampleCount, setCustomSampleCount] = React.useState(0);
   const [activeVizIndex, setActiveVizIndex] = React.useState(() =>
     resolveStoredVisualizationIndex(),
   );
@@ -343,6 +364,24 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
     cowbellOverlay.setVolume(player.getVolume());
     playerRef.current = player;
     cowbellOverlayRef.current = cowbellOverlay;
+
+    void getStoredCustomSamples().then(async (stored) => {
+      const ctx = player.getContext();
+      for (const item of stored) {
+        try {
+          const decoded = await ctx.decodeAudioData(item.data.slice(0));
+          cowbellOverlay.addCustomSample({
+            id: item.id,
+            name: item.name,
+            buffer: decoded,
+          });
+        } catch (err) {
+          console.warn("Failed to decode cached sample:", err);
+        }
+      }
+      setCustomSampleCount(cowbellOverlay.getCustomSamples().length);
+    });
+
     if (jukeboxAudioMode === "cowbell") {
       cowbellOverlay.enable();
       player.setJukeboxAudioMode("cowbell", audioIntensity);
@@ -388,11 +427,28 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
       autocanonizerMainPanRef.current / 100,
       autocanonizerOtherPanRef.current / 100,
     );
-    autocanonizer.setOnBeat((index, _beat, cursorTimes) => {
+    if (playerRef.current) {
+      const activeBuf = playerRef.current.getActiveBuffer() ?? playerRef.current.getSourceBuffer();
+      autocanonizer.setAudio(
+        activeBuf,
+        playerRef.current.getContext(),
+        playerRef.current.getSourceChainInput(),
+      );
+      autocanonizer.setPlaybackRate(playerRef.current.getPlaybackRate());
+    }
+    autocanonizer.setOnBeat((index, beat, cursorTimes) => {
       setBeatsPlayed(index + 1);
       lastBeatRef.current = index;
       setAutocanonizerMainSeconds(cursorTimes.mainSeconds);
       setAutocanonizerOtherSeconds(cursorTimes.otherSeconds);
+      cowbellOverlayRef.current?.handleBeatEnter(
+        index,
+        beat,
+        beat.next ?? undefined,
+      );
+    });
+    autocanonizer.setOnPlaybackStateChange((isPlaying) => {
+      playerRef.current?.setExternalPlaying(isPlaying);
     });
     autocanonizer.setOnEnded(() => {
       if (!isRunningRef.current) {
@@ -534,10 +590,17 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
         fingerprintRef.current = result.fingerprint;
         setAnalysis(result.analysis);
         setReadyFileKey(fileKey);
+        if (file && typeof setCachedAudio === "function") {
+          setCachedAudio(result.fingerprint, file).catch(() => {});
+        }
         await playerRef.current?.loadBuffer(result.audioBuffer);
         autocanonizerRef.current?.setAudio(
-          playerRef.current?.getSourceBuffer() ?? null,
-          playerRef.current?.getContext() ?? null
+          playerRef.current?.getActiveBuffer() ?? playerRef.current?.getSourceBuffer() ?? null,
+          playerRef.current?.getContext() ?? null,
+          playerRef.current?.getSourceChainInput() ?? null,
+        );
+        autocanonizerRef.current?.setPlaybackRate(
+          playerRef.current?.getPlaybackRate() ?? 1,
         );
         initializeEngine(result.analysis);
         restoreSavedTuning(result.fingerprint);
@@ -583,6 +646,7 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
 
   function stopPlayback() {
     cowbellOverlayRef.current?.cancelScheduledHits();
+    playerRef.current?.setExternalPlaying(false);
     if (playModeRef.current === "autocanonizer") {
       autocanonizerRef.current?.stop();
       playerRef.current?.stop();
@@ -613,8 +677,10 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
         return;
       }
       if (playModeRef.current === "jukebox" && !bringItHomeModeRef.current) {
-        // Recover if audio reaches buffer end before the scheduled wrap jump.
-        startFromBeat(0);
+        // Recover if audio reaches buffer end: seamlessly loop back into anchor target beat
+        const activeAnchor = engineRef.current?.getActiveAnchorEdge?.();
+        const loopTarget = activeAnchor?.dest.which ?? 0;
+        startFromBeat(loopTarget);
         if (!player.isPlaying()) {
           engineRef.current?.play();
         }
@@ -643,6 +709,16 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
       setIsInfoOpen(false);
       setTuningActiveTab("tuning");
       clearSelectedBranch();
+      const player = playerRef.current;
+      const autocanonizer = autocanonizerRef.current;
+      if (player && autocanonizer) {
+        const activeBuf = player.getActiveBuffer() ?? player.getSourceBuffer();
+        if (activeBuf) {
+          autocanonizer.setAudioBuffer(activeBuf);
+        }
+        autocanonizer.setDestination(player.getSourceChainInput());
+        autocanonizer.setPlaybackRate(player.getPlaybackRate());
+      }
     }
   };
 
@@ -889,6 +965,7 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
         setSwingProgress(100);
         player.setRenderedJukeboxAudioBuffer("swing", buffer);
         player.setJukeboxAudioMode("swing");
+        autocanonizerRef.current?.setAudioBuffer(buffer);
         if (
           playModeRef.current === "jukebox" &&
           (isRunningRef.current || isPausedRef.current)
@@ -1055,6 +1132,16 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
     player.stop();
     cowbellOverlayRef.current?.cancelScheduledHits();
     engine.stopJukebox();
+    const activeBuf = player.getActiveBuffer() ?? player.getSourceBuffer();
+    if (activeBuf) {
+      autocanonizer.setAudioBuffer(activeBuf);
+    }
+    autocanonizer.setDestination(player.getSourceChainInput());
+    autocanonizer.setPlaybackRate(player.getPlaybackRate());
+    if (jukeboxAudioMode === "cowbell") {
+      cowbellOverlayRef.current?.enable();
+    }
+    player.setExternalPlaying(true);
     if (resetSession) {
       resetPlaybackSessionMetrics();
       autocanonizer.resetVisualization();
@@ -1134,45 +1221,62 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
     return true;
   };
 
+  const applyTuningLive = React.useCallback(
+    (nextTune: TuneFormState) => {
+      const engine = engineRef.current;
+      const player = playerRef.current;
+      if (!engine || !player) {
+        return;
+      }
+
+      let minProb = nextTune.minProb;
+      let maxProb = nextTune.maxProb;
+      if (minProb > maxProb) {
+        [minProb, maxProb] = [maxProb, minProb];
+      }
+      const useAutoThreshold = nextTune.threshold === nextTune.computedThreshold;
+
+      engine.updateConfig({
+        currentThreshold: useAutoThreshold ? 0 : nextTune.threshold,
+        minRandomBranchChance: minProb / 100,
+        maxRandomBranchChance: maxProb / 100,
+        randomBranchChanceDelta: nextTune.ramp / RANDOM_BRANCH_DELTA_PERCENT_SCALE,
+        justBackwards: nextTune.justBackwards,
+        justLongBranches: nextTune.minLongBranchPercent > 0,
+        minLongBranchPercent:
+          nextTune.minLongBranchPercent > 0
+            ? nextTune.minLongBranchPercent
+            : DEFAULT_MIN_LONG_BRANCH_PERCENT,
+        removeSequentialBranches: nextTune.removeSequentialBranches,
+      });
+      setHighlightAnchorBranch(nextTune.highlightAnchorBranch);
+      storeAnchorHighlight(nextTune.highlightAnchorBranch);
+      vizControllerRef.current?.setAnchorHighlightEnabled(
+        nextTune.highlightAnchorBranch,
+      );
+      rebuildGraphAndSyncViz();
+      const volume = nextTune.volume / 100;
+      player.setVolume(volume);
+      autocanonizerRef.current?.setVolume(volume);
+      cowbellOverlayRef.current?.setVolume(volume);
+      persistCurrentTuning();
+    },
+    [],
+  );
+
+  const updateTuneFormLive = React.useCallback(
+    (updater: React.SetStateAction<TuneFormState>) => {
+      setTuneForm((prev) => {
+        const next = typeof updater === "function" ? updater(prev) : updater;
+        applyTuningLive(next);
+        return next;
+      });
+    },
+    [applyTuningLive],
+  );
+
   const onApplyTuning = () => {
-    const engine = engineRef.current;
-    const player = playerRef.current;
-    if (!engine || !player) {
-      return;
-    }
-
-    let minProb = tuneForm.minProb;
-    let maxProb = tuneForm.maxProb;
-    if (minProb > maxProb) {
-      [minProb, maxProb] = [maxProb, minProb];
-    }
-    const useAutoThreshold = tuneForm.threshold === tuneForm.computedThreshold;
-
-    engine.updateConfig({
-      currentThreshold: useAutoThreshold ? 0 : tuneForm.threshold,
-      minRandomBranchChance: minProb / 100,
-      maxRandomBranchChance: maxProb / 100,
-      randomBranchChanceDelta: tuneForm.ramp / RANDOM_BRANCH_DELTA_PERCENT_SCALE,
-      justBackwards: tuneForm.justBackwards,
-      justLongBranches: tuneForm.minLongBranchPercent > 0,
-      minLongBranchPercent:
-        tuneForm.minLongBranchPercent > 0
-          ? tuneForm.minLongBranchPercent
-          : DEFAULT_MIN_LONG_BRANCH_PERCENT,
-      removeSequentialBranches: tuneForm.removeSequentialBranches,
-    });
-    setHighlightAnchorBranch(tuneForm.highlightAnchorBranch);
-    storeAnchorHighlight(tuneForm.highlightAnchorBranch);
-    vizControllerRef.current?.setAnchorHighlightEnabled(
-      tuneForm.highlightAnchorBranch,
-    );
-    rebuildGraphAndSyncViz();
-    const volume = tuneForm.volume / 100;
-    player.setVolume(volume);
-    autocanonizerRef.current?.setVolume(volume);
-    cowbellOverlayRef.current?.setVolume(volume);
-    syncTuneFormFromEngine(tuneForm.highlightAnchorBranch);
-    persistCurrentTuning();
+    applyTuningLive(tuneForm);
     setIsTuningOpen(false);
   };
 
@@ -1193,61 +1297,106 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
     setIsTuningOpen(false);
   };
 
+  const applyDirectAudioMode = React.useCallback(
+    (nextAudioMode: JukeboxAudioMode, nextAudioIntensity = audioIntensity) => {
+      const player = playerRef.current;
+      const previousAudioMode = jukeboxAudioMode;
+      const previousAudioIntensity = audioIntensity;
+      let resolvedIntensity = nextAudioIntensity;
+      if (
+        nextAudioMode !== "off" &&
+        previousAudioMode !== nextAudioMode &&
+        (previousAudioIntensity === 0 || nextAudioIntensity === 0)
+      ) {
+        resolvedIntensity = DEFAULT_AUDIO_MODE_INTENSITY;
+      }
+      const clampedIntensity = clampAudioModeIntensity(resolvedIntensity);
+
+      setJukeboxAudioMode(nextAudioMode);
+      setAudioIntensity(clampedIntensity);
+      setGlobalAudioMode?.(nextAudioMode);
+      setGlobalAudioIntensity?.(clampedIntensity);
+      setExtrasForm((prev) => ({
+        ...prev,
+        audioMode: nextAudioMode,
+        audioIntensity: clampedIntensity,
+      }));
+
+      if (player) {
+        if (nextAudioMode === "cowbell") {
+          cowbellOverlayRef.current?.enable();
+        } else {
+          cowbellOverlayRef.current?.disable();
+        }
+        if (nextAudioMode === "swing") {
+          player.setJukeboxAudioMode("swing", clampedIntensity);
+          if (canPrepareSwingMode()) {
+            prepareSwingMode();
+          } else {
+            showShortcutToast(t("listen.swingWhenLoaded"));
+          }
+        } else {
+          swingRenderTokenRef.current += 1;
+          setSwingPreparingState(false);
+          setSwingProgress(0);
+          player.setJukeboxAudioMode(nextAudioMode, clampedIntensity);
+        }
+
+        if (autocanonizerRef.current) {
+          const activeBuf = player.getActiveBuffer();
+          if (activeBuf) {
+            autocanonizerRef.current.setAudioBuffer(activeBuf);
+          }
+          autocanonizerRef.current.setDestination(player.getSourceChainInput());
+          autocanonizerRef.current.setPlaybackRate(player.getPlaybackRate());
+        }
+
+        if (
+          audioModeChangeAffectsPlayback(
+            previousAudioMode,
+            nextAudioMode,
+            previousAudioIntensity,
+            clampedIntensity,
+          ) &&
+          playModeRef.current === "jukebox" &&
+          nextAudioMode !== "swing" &&
+          (isRunningRef.current || isPausedRef.current)
+        ) {
+          engineRef.current?.syncToPlaybackPosition();
+        }
+      }
+      writeAudioModeToUrl(nextAudioMode, clampedIntensity, true);
+    },
+    [
+      audioIntensity,
+      canPrepareSwingMode,
+      jukeboxAudioMode,
+      prepareSwingMode,
+      setGlobalAudioIntensity,
+      setGlobalAudioMode,
+      showShortcutToast,
+      t,
+    ],
+  );
+
   const onApplyExtras = () => {
-    const player = playerRef.current;
-    if (!player) {
-      return;
-    }
-    const previousAudioMode = jukeboxAudioMode;
-    const previousAudioIntensity = audioIntensity;
-    const nextBranchStatsEnabled = playModeRef.current === "jukebox" && extrasForm.branchStatsEnabled;
-    const nextBringItHomeMode = playModeRef.current === "jukebox" && extrasForm.bringItHomeMode;
-    const nextAudioMode = extrasForm.audioMode;
-    const nextAudioIntensity = clampAudioModeIntensity(
-      extrasForm.audioIntensity,
-    );
+    const nextBranchStatsEnabled =
+      playModeRef.current === "jukebox" && extrasForm.branchStatsEnabled;
+    const nextBringItHomeMode =
+      playModeRef.current === "jukebox" && extrasForm.bringItHomeMode;
+
     bringItHomeModeRef.current = nextBringItHomeMode;
     setBringItHomeMode(nextBringItHomeMode);
+    setGlobalBringItHomeMode?.(nextBringItHomeMode);
     if (nextBringItHomeMode) {
       engineRef.current?.setForceBranch(false);
     }
     engineRef.current?.setBringItHomeMode(nextBringItHomeMode);
     setBranchStatsEnabled(nextBranchStatsEnabled);
+    setGlobalBranchStatsEnabled?.(nextBranchStatsEnabled);
     storeBranchStatsEnabled(nextBranchStatsEnabled);
-    setJukeboxAudioMode(nextAudioMode);
-    setAudioIntensity(nextAudioIntensity);
-    if (nextAudioMode === "cowbell") {
-      cowbellOverlayRef.current?.enable();
-    } else {
-      cowbellOverlayRef.current?.disable();
-    }
-    if (nextAudioMode === "swing") {
-      player.setJukeboxAudioMode("swing", nextAudioIntensity);
-      if (canPrepareSwingMode()) {
-        prepareSwingMode();
-      } else {
-        showShortcutToast(t("listen.swingWhenLoaded"));
-      }
-    } else {
-      swingRenderTokenRef.current += 1;
-      setSwingPreparingState(false);
-      setSwingProgress(0);
-      player.setJukeboxAudioMode(nextAudioMode, nextAudioIntensity);
-    }
-    writeAudioModeToUrl(nextAudioMode, nextAudioIntensity, true);
-    if (
-      audioModeChangeAffectsPlayback(
-        previousAudioMode,
-        nextAudioMode,
-        previousAudioIntensity,
-        nextAudioIntensity,
-      ) &&
-      playModeRef.current === "jukebox" &&
-      nextAudioMode !== "swing" &&
-      (isRunningRef.current || isPausedRef.current)
-    ) {
-      engineRef.current?.syncToPlaybackPosition();
-    }
+
+    applyDirectAudioMode(extrasForm.audioMode, extrasForm.audioIntensity);
     setIsTuningOpen(false);
   };
 
@@ -1455,6 +1604,38 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
         />
       ) : null}
 
+      {showPlaybackUi ? (
+        <div className="listen-quick-audio-bar">
+          <AudioModeSuite
+            selectedAudioMode={jukeboxAudioMode}
+            onSelectMode={(mode) => applyDirectAudioMode(mode, audioIntensity)}
+            intensityPct={audioIntensity}
+            onIntensityChange={(intensity) =>
+              applyDirectAudioMode(jukeboxAudioMode, intensity)
+            }
+            bringItHomeMode={bringItHomeMode}
+            onToggleBringItHome={(enabled) => {
+              bringItHomeModeRef.current = enabled;
+              setBringItHomeMode(enabled);
+              setGlobalBringItHomeMode?.(enabled);
+              if (enabled) {
+                engineRef.current?.setForceBranch(false);
+              }
+              engineRef.current?.setBringItHomeMode(enabled);
+            }}
+            branchStatsEnabled={branchStatsEnabled}
+            onToggleBranchStats={(enabled) => {
+              setBranchStatsEnabled(enabled);
+              setGlobalBranchStatsEnabled?.(enabled);
+              storeBranchStatsEnabled(enabled);
+            }}
+            compact
+            onOpenCustomSamples={() => setIsCustomSamplesOpen(true)}
+            customSampleCount={customSampleCount}
+          />
+        </div>
+      ) : null}
+
       <div id="viz-panel" ref={vizPanelRef} hidden={!showPlaybackUi}>
         <div id="jukebox-viz" className={`viz ${playMode === "autocanonizer" ? "is-canonizer" : ""}`}>
           {branchStats ? (
@@ -1578,14 +1759,27 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
           activeTab={tuningActiveTab}
           onTabChange={setTuningActiveTab}
           tuneForm={tuneForm}
-          setTuneForm={setTuneForm}
+          setTuneForm={updateTuneFormLive}
           extrasForm={extrasForm}
           setExtrasForm={setExtrasForm}
           onClose={() => setIsTuningOpen(false)}
           onReset={onResetTuningModal}
           onApply={onApplyTuningModal}
+          onOpenCustomSamples={() => setIsCustomSamplesOpen(true)}
         />
       ) : null}
+
+      <CustomSampleModal
+        isOpen={isCustomSamplesOpen}
+        onClose={() => setIsCustomSamplesOpen(false)}
+        audioContext={playerRef.current?.getContext() ?? null}
+        cowbellOverlay={cowbellOverlayRef.current}
+        onSamplesChange={() =>
+          setCustomSampleCount(
+            cowbellOverlayRef.current?.getCustomSamples().length ?? 0,
+          )
+        }
+      />
 
       {isInfoOpen ? (
         <InfoModal

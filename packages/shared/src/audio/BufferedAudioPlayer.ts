@@ -72,6 +72,7 @@ export class BufferedAudioPlayer {
   private playbackRate = AUDIO_MODE_SETTINGS.off.rate;
   private panAngle = 0;
   private panFrameId: number | null = null;
+  private externalPlaying = false;
   private renderedModeBuffers: Partial<Record<JukeboxAudioMode, AudioBuffer>> =
     {};
 
@@ -289,8 +290,21 @@ export class BufferedAudioPlayer {
     return this.renderedModeBuffers[mode] ?? null;
   }
 
-  private getActiveBuffer(): AudioBuffer | null {
+  getActiveBuffer(): AudioBuffer | null {
     return this.renderedModeBuffers[this.audioMode] ?? this.originalBuffer;
+  }
+
+  getSourceChainInput(): GainNode {
+    return this.sourceChainInput;
+  }
+
+  setExternalPlaying(playing: boolean) {
+    this.externalPlaying = playing;
+    this.syncPanMotion();
+  }
+
+  isExternalPlaying(): boolean {
+    return this.externalPlaying;
   }
 
   // No-op unless eight-bit is the active mode with a valid source buffer.
@@ -906,7 +920,8 @@ export class BufferedAudioPlayer {
 
   private syncPanMotion() {
     const settings = this.getActiveModeSettings();
-    if (!settings.pan || !this.playing || !this.stereoPanner) {
+    const isPlaying = this.playing || this.externalPlaying;
+    if (!settings.pan || !isPlaying || !this.stereoPanner) {
       this.stopPanMotion();
       return;
     }
@@ -919,7 +934,8 @@ export class BufferedAudioPlayer {
     }
     const tick = () => {
       const currentSettings = this.getActiveModeSettings();
-      if (!this.playing || !currentSettings.pan || !this.stereoPanner) {
+      const stillPlaying = this.playing || this.externalPlaying;
+      if (!stillPlaying || !currentSettings.pan || !this.stereoPanner) {
         this.stopPanMotion();
         return;
       }
