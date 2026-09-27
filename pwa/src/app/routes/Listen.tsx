@@ -1221,45 +1221,62 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
     return true;
   };
 
+  const tuningDebounceRef = React.useRef<number | null>(null);
+  const liveTuningRafRef = React.useRef<number | null>(null);
+
   const applyTuningLive = React.useCallback(
     (nextTune: TuneFormState) => {
-      const engine = engineRef.current;
-      const player = playerRef.current;
-      if (!engine || !player) {
-        return;
-      }
+      try {
+        const engine = engineRef.current;
+        if (!engine) {
+          return;
+        }
 
-      let minProb = nextTune.minProb;
-      let maxProb = nextTune.maxProb;
-      if (minProb > maxProb) {
-        [minProb, maxProb] = [maxProb, minProb];
-      }
-      const useAutoThreshold = nextTune.threshold === nextTune.computedThreshold;
+        let minProb = nextTune.minProb;
+        let maxProb = nextTune.maxProb;
+        if (minProb > maxProb) {
+          [minProb, maxProb] = [maxProb, minProb];
+        }
+        const useAutoThreshold = nextTune.threshold === nextTune.computedThreshold;
 
-      engine.updateConfig({
-        currentThreshold: useAutoThreshold ? 0 : nextTune.threshold,
-        minRandomBranchChance: minProb / 100,
-        maxRandomBranchChance: maxProb / 100,
-        randomBranchChanceDelta: nextTune.ramp / RANDOM_BRANCH_DELTA_PERCENT_SCALE,
-        justBackwards: nextTune.justBackwards,
-        justLongBranches: nextTune.minLongBranchPercent > 0,
-        minLongBranchPercent:
-          nextTune.minLongBranchPercent > 0
-            ? nextTune.minLongBranchPercent
-            : DEFAULT_MIN_LONG_BRANCH_PERCENT,
-        removeSequentialBranches: nextTune.removeSequentialBranches,
-      });
-      setHighlightAnchorBranch(nextTune.highlightAnchorBranch);
-      storeAnchorHighlight(nextTune.highlightAnchorBranch);
-      vizControllerRef.current?.setAnchorHighlightEnabled(
-        nextTune.highlightAnchorBranch,
-      );
-      rebuildGraphAndSyncViz();
-      const volume = nextTune.volume / 100;
-      player.setVolume(volume);
-      autocanonizerRef.current?.setVolume(volume);
-      cowbellOverlayRef.current?.setVolume(volume);
-      persistCurrentTuning();
+        engine.updateConfig({
+          currentThreshold: useAutoThreshold ? 0 : nextTune.threshold,
+          minRandomBranchChance: minProb / 100,
+          maxRandomBranchChance: maxProb / 100,
+          randomBranchChanceDelta: nextTune.ramp / RANDOM_BRANCH_DELTA_PERCENT_SCALE,
+          justBackwards: nextTune.justBackwards,
+          justLongBranches: nextTune.minLongBranchPercent > 0,
+          minLongBranchPercent:
+            nextTune.minLongBranchPercent > 0
+              ? nextTune.minLongBranchPercent
+              : DEFAULT_MIN_LONG_BRANCH_PERCENT,
+          removeSequentialBranches: nextTune.removeSequentialBranches,
+        });
+
+        setHighlightAnchorBranch(nextTune.highlightAnchorBranch);
+        storeAnchorHighlight(nextTune.highlightAnchorBranch);
+        vizControllerRef.current?.setAnchorHighlightEnabled(
+          nextTune.highlightAnchorBranch,
+        );
+
+        rebuildGraphAndSyncViz();
+
+        if (typeof nextTune.volume === "number" && Number.isFinite(nextTune.volume)) {
+          const volume = Math.max(0, Math.min(1, nextTune.volume / 100));
+          playerRef.current?.setVolume(volume);
+          autocanonizerRef.current?.setVolume(volume);
+          cowbellOverlayRef.current?.setVolume(volume);
+        }
+
+        if (tuningDebounceRef.current) {
+          window.clearTimeout(tuningDebounceRef.current);
+        }
+        tuningDebounceRef.current = window.setTimeout(() => {
+          persistCurrentTuning();
+        }, 250);
+      } catch (err) {
+        console.error("Failed to apply live tuning:", err);
+      }
     },
     [],
   );
@@ -1268,7 +1285,12 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
     (updater: React.SetStateAction<TuneFormState>) => {
       setTuneForm((prev) => {
         const next = typeof updater === "function" ? updater(prev) : updater;
-        applyTuningLive(next);
+        if (liveTuningRafRef.current) {
+          cancelAnimationFrame(liveTuningRafRef.current);
+        }
+        liveTuningRafRef.current = requestAnimationFrame(() => {
+          applyTuningLive(next);
+        });
         return next;
       });
     },

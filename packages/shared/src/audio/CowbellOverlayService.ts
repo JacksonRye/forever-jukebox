@@ -167,6 +167,9 @@ export class CowbellOverlayService {
   }
 
   setVolume(value: number) {
+    if (!Number.isFinite(value)) {
+      return;
+    }
     this.volume = Math.max(0, Math.min(1, value));
     this.updateMasterGain();
   }

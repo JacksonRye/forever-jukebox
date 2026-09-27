@@ -231,6 +231,9 @@ export class BufferedAudioPlayer {
   }
 
   setVolume(value: number) {
+    if (!Number.isFinite(value)) {
+      return;
+    }
     const clamped = Math.max(0, Math.min(1, value));
     this.volume = clamped;
     this.masterGain.gain.value = clamped;

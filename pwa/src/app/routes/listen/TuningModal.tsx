@@ -110,9 +110,6 @@ export function TuningModal({
                 onChange={(event) =>
                   setTuneForm((prev) => ({ ...prev, threshold: Number(event.target.value) }))
                 }
-                onInput={(event) =>
-                  setTuneForm((prev) => ({ ...prev, threshold: Number(event.currentTarget.value) }))
-                }
               />
             </label>
             <label>
@@ -129,9 +126,6 @@ export function TuningModal({
                 aria-label={t("tuning.probabilityMin")}
                 onChange={(event) =>
                   setTuneForm((prev) => ({ ...prev, minProb: Number(event.target.value) }))
-                }
-                onInput={(event) =>
-                  setTuneForm((prev) => ({ ...prev, minProb: Number(event.currentTarget.value) }))
                 }
               />
             </label>
@@ -150,9 +144,6 @@ export function TuningModal({
                 onChange={(event) =>
                   setTuneForm((prev) => ({ ...prev, maxProb: Number(event.target.value) }))
                 }
-                onInput={(event) =>
-                  setTuneForm((prev) => ({ ...prev, maxProb: Number(event.currentTarget.value) }))
-                }
               />
             </label>
             <label>
@@ -169,9 +160,6 @@ export function TuningModal({
                 aria-label={t("tuning.rampSpeed")}
                 onChange={(event) =>
                   setTuneForm((prev) => ({ ...prev, ramp: Number(event.target.value) }))
-                }
-                onInput={(event) =>
-                  setTuneForm((prev) => ({ ...prev, ramp: Number(event.currentTarget.value) }))
                 }
               />
             </label>
@@ -204,15 +192,6 @@ export function TuningModal({
                     minLongBranchPercent:
                       MIN_JUMP_DISTANCE_OPTIONS[
                         Number(event.target.value)
-                      ] ?? 0,
-                  }))
-                }
-                onInput={(event) =>
-                  setTuneForm((prev) => ({
-                    ...prev,
-                    minLongBranchPercent:
-                      MIN_JUMP_DISTANCE_OPTIONS[
-                        Number(event.currentTarget.value)
                       ] ?? 0,
                   }))
                 }
