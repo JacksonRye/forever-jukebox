@@ -52,6 +52,21 @@ export interface TrackAnalysis {
   track?: TrackMeta;
 }
 
+export interface LoopRange {
+  startBeatIndex: number;
+  endBeatIndex: number;
+}
+
+export interface TrackSectionSpan {
+  index: number;
+  startBeatIndex: number;
+  endBeatIndex: number;
+  startTime: number;
+  endTime: number;
+  duration: number;
+  beatCount: number;
+}
+
 export interface JukeboxConfig {
   maxBranches: number;
   maxBranchThreshold: number;

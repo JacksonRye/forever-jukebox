@@ -1,4 +1,4 @@
-import type { Edge } from "../engine/types";
+import type { Edge, LoopRange } from "../engine/types";
 import { JukeboxViz } from "./JukeboxViz";
 
 export class JukeboxController {
@@ -6,6 +6,14 @@ export class JukeboxController {
 
   constructor(vizLayer: HTMLElement) {
     this.viz = new JukeboxViz(vizLayer);
+  }
+
+  setLoopRange(range: LoopRange | null) {
+    this.viz.setLoopRange(range);
+  }
+
+  getLoopRange(): LoopRange | null {
+    return this.viz.getLoopRange();
   }
 
   getCount() {

@@ -22,8 +22,10 @@ import {
   JukeboxConfig,
   JukeboxGraphState,
   JukeboxState,
+  LoopRange,
   QuantumBase,
   TrackAnalysis,
+  TrackSectionSpan,
 } from "./types";
 
 export const DEFAULT_JUKEBOX_CONFIG: JukeboxConfig = {
@@ -113,6 +115,7 @@ export class JukeboxEngine {
   private bringItHomeMode = false;
   private playVelocity = 1;
   private freezeCurrentBeat = false;
+  private loopRange: LoopRange | null = null;
   private pendingAdvance: PendingAdvance | null = null;
   private readonly deletedEdgeKeys = new Set<string>();
   private userAnchorEdgeId: number | null = null;
@@ -534,6 +537,80 @@ export class JukeboxEngine {
     return Array.from(indices).sort((left, right) => left - right);
   }
 
+  setLoopRange(range: LoopRange | null) {
+    if (!range) {
+      this.loopRange = null;
+      this.refreshPendingAdvance();
+      return;
+    }
+    const maxIndex = Math.max(0, this.beats.length - 1);
+    const start = Math.max(0, Math.min(range.startBeatIndex, maxIndex));
+    const end = Math.max(start, Math.min(range.endBeatIndex, maxIndex));
+    this.loopRange = { startBeatIndex: start, endBeatIndex: end };
+    this.refreshPendingAdvance();
+  }
+
+  getLoopRange(): LoopRange | null {
+    return this.loopRange ? { ...this.loopRange } : null;
+  }
+
+  getSectionsWithBeats(): TrackSectionSpan[] {
+    if (!this.analysis || this.beats.length === 0) {
+      return [];
+    }
+    const rawSections = this.analysis.sections;
+    if (!rawSections || rawSections.length === 0) {
+      const firstBeat = this.beats[0];
+      const lastBeat = this.beats[this.beats.length - 1];
+      const startTime = firstBeat.start;
+      const endTime = lastBeat.start + lastBeat.duration;
+      return [
+        {
+          index: 0,
+          startBeatIndex: 0,
+          endBeatIndex: this.beats.length - 1,
+          startTime,
+          endTime,
+          duration: Math.max(0, endTime - startTime),
+          beatCount: this.beats.length,
+        },
+      ];
+    }
+
+    const spans: TrackSectionSpan[] = [];
+    for (let i = 0; i < rawSections.length; i += 1) {
+      const section = rawSections[i];
+      const startBeat = this.findBeatIndexAtOrAfterTime(section.start);
+      if (startBeat < 0 || startBeat >= this.beats.length) {
+        continue;
+      }
+      let endBeat: number;
+      if (i + 1 < rawSections.length) {
+        const nextStartBeat = this.findBeatIndexAtOrAfterTime(
+          rawSections[i + 1].start,
+        );
+        endBeat = nextStartBeat > startBeat ? nextStartBeat - 1 : startBeat;
+      } else {
+        endBeat = this.beats.length - 1;
+      }
+      endBeat = Math.min(this.beats.length - 1, Math.max(startBeat, endBeat));
+      const sBeat = this.beats[startBeat];
+      const eBeat = this.beats[endBeat];
+      const startTime = sBeat.start;
+      const endTime = eBeat.start + eBeat.duration;
+      spans.push({
+        index: i,
+        startBeatIndex: startBeat,
+        endBeatIndex: endBeat,
+        startTime,
+        endTime,
+        duration: Math.max(0, endTime - startTime),
+        beatCount: endBeat - startBeat + 1,
+      });
+    }
+    return spans;
+  }
+
   private resetState() {
     this.currentBeatIndex = -1;
     this.nextAudioTime = 0;
@@ -665,6 +742,14 @@ export class JukeboxEngine {
 
       if (this.freezeCurrentBeat) {
         chosenIndex = currentIndex;
+      } else if (
+        this.loopRange &&
+        (currentIndex < this.loopRange.startBeatIndex ||
+          currentIndex >= this.loopRange.endBeatIndex)
+      ) {
+        chosenIndex = this.loopRange.startBeatIndex;
+        shouldJump = true;
+        jumpFromIndex = currentIndex;
       } else {
         const rawSeedIndex = currentIndex + this.playVelocity;
         if (
@@ -686,17 +771,31 @@ export class JukeboxEngine {
             sourceBoundaryTime,
           };
         }
-        const seedIndex = this.wrapBeatIndex(rawSeedIndex, beatsCount);
+        const seedIndex = this.loopRange
+          ? (rawSeedIndex > this.loopRange.endBeatIndex
+              ? this.loopRange.startBeatIndex
+              : Math.max(this.loopRange.startBeatIndex, rawSeedIndex))
+          : this.wrapBeatIndex(rawSeedIndex, beatsCount);
         chosenIndex = seedIndex;
         if (!this.bringItHomeMode) {
           const isWrappingAtEnd =
-            currentIndex === beatsCount - 1 && naturalNextIndex === 0;
+            (!this.loopRange &&
+              currentIndex === beatsCount - 1 &&
+              naturalNextIndex === 0) ||
+            (this.loopRange !== null &&
+              currentIndex >= this.loopRange.endBeatIndex);
           const seed = this.beats[seedIndex];
           if (!isWrappingAtEnd && !this.hasJumpScheduleLead(sourceBoundaryTime)) {
+            const nextIdx =
+              this.loopRange && naturalNextIndex > this.loopRange.endBeatIndex
+                ? this.loopRange.startBeatIndex
+                : naturalNextIndex;
             return {
               boundaryAudioTime,
-              chosenIndex: naturalNextIndex,
-              shouldJump: false,
+              chosenIndex: nextIdx,
+              shouldJump: this.loopRange
+                ? nextIdx === this.loopRange.startBeatIndex
+                : false,
               selectedBranch: false,
               targetTime: null,
               jumpFromIndex: null,
@@ -712,6 +811,7 @@ export class JukeboxEngine {
             this.branchState,
             this.forceBranch,
             this.getActiveUserAnchorSelection(),
+            this.loopRange,
           );
           this.curRandomBranchChance = this.branchState.curRandomBranchChance;
           chosenIndex = selection.jumped ? selection.index : seedIndex;
@@ -724,7 +824,10 @@ export class JukeboxEngine {
 
       const naturalPlaybackContinues =
         chosenIndex === naturalNextIndex &&
-        !(currentIndex === beatsCount - 1 && naturalNextIndex === 0);
+        !(currentIndex === beatsCount - 1 && naturalNextIndex === 0) &&
+        (!this.loopRange ||
+          (chosenIndex === currentIndex + 1 &&
+            chosenIndex <= this.loopRange.endBeatIndex));
       shouldJump = !naturalPlaybackContinues;
       if (shouldJump && jumpFromIndex === null) {
         jumpFromIndex = currentIndex;

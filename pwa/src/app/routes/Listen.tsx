@@ -96,11 +96,13 @@ import { CustomSampleModal } from "@/ui/components/CustomSampleModal";
 import { getStoredCustomSamples } from "@/core/infrastructure/cache/customSampleStore";
 import { VizTop } from "./listen/VizTop";
 import { VolumePopover } from "./listen/VolumePopover";
+import { SectionLoopPopover } from "./listen/SectionLoopPopover";
 import { useAudioExport } from "./listen/useAudioExport";
 import { useFullscreenSession } from "./listen/useFullscreenSession";
 import { useListenHotkeys } from "./listen/useListenHotkeys";
 import { useSleepTimer } from "./listen/useSleepTimer";
 import { useVizPopovers } from "./listen/useVizPopovers";
+import type { LoopRange, TrackSectionSpan } from "@forever-jukebox/shared";
 
 export function Listen({ isActive = true }: { isActive?: boolean }) {
   const { t } = useTranslation();
@@ -241,13 +243,24 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
   const {
     isVolumeOpen,
     isPanOpen,
+    isLoopOpen,
     toggleVolume,
     togglePan,
+    toggleLoop,
     volumeButtonRef,
     volumePanelRef,
     panButtonRef,
     panPanelRef,
+    loopButtonRef,
+    loopPanelRef,
   } = useVizPopovers({ playMode });
+  const [activeLoopRange, setActiveLoopRange] =
+    React.useState<LoopRange | null>(null);
+  const activeLoopRangeRef = React.useRef<LoopRange | null>(null);
+  activeLoopRangeRef.current = activeLoopRange;
+  const [trackSections, setTrackSections] = React.useState<TrackSectionSpan[]>(
+    [],
+  );
   const { isFullscreen, onToggleFullscreen, requestWakeLockIfFullscreen } =
     useFullscreenSession({
       vizPanelRef,
@@ -342,6 +355,9 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
     const data = engineRef.current?.getVisualizationData();
     if (data) {
       vizControllerRef.current?.setData(data);
+    }
+    if (activeLoopRangeRef.current) {
+      vizControllerRef.current?.setLoopRange(activeLoopRangeRef.current);
     }
     vizDataRef.current = data ?? null;
     return data ?? null;
@@ -534,6 +550,9 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
     if (isTrackChange) {
       cowbellOverlayRef.current?.setSectionStartBeatIndices([]);
       resetAudioModeToOff(playerRef.current);
+      setActiveLoopRange(null);
+      activeLoopRangeRef.current = null;
+      setTrackSections([]);
     }
 
     const fileKey = `${file.name}:${file.size}:${file.lastModified}`;
@@ -548,7 +567,10 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
     engineRef.current?.setFreezeCurrentBeat(false);
     engineRef.current?.setPlayVelocity(1);
     engineRef.current?.setBringItHomeMode(false);
+    engineRef.current?.setLoopRange(null);
     autocanonizerRef.current?.stop();
+    autocanonizerRef.current?.setLoopRange(null);
+    vizControllerRef.current?.setLoopRange(null);
     resetPlaybackSessionMetrics();
     setIsRunning(false);
     setIsPaused(false);
@@ -677,9 +699,11 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
         return;
       }
       if (playModeRef.current === "jukebox" && !bringItHomeModeRef.current) {
-        // Recover if audio reaches buffer end: seamlessly loop back into anchor target beat
+        // Recover if audio reaches buffer end: seamlessly loop back into active loop range or anchor target beat
+        const activeLoop = activeLoopRangeRef.current;
         const activeAnchor = engineRef.current?.getActiveAnchorEdge?.();
-        const loopTarget = activeAnchor?.dest.which ?? 0;
+        const loopTarget =
+          activeLoop?.startBeatIndex ?? (activeAnchor?.dest.which ?? 0);
         startFromBeat(loopTarget);
         if (!player.isPlaying()) {
           engineRef.current?.play();
@@ -732,6 +756,10 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
     });
     engine.loadAnalysis(analysisData);
     engine.setBringItHomeMode(bringItHomeModeRef.current);
+    if (activeLoopRangeRef.current) {
+      engine.setLoopRange(activeLoopRangeRef.current);
+    }
+    setTrackSections(engine.getSectionsWithBeats());
     cowbellOverlayRef.current?.setSectionStartBeatIndices(
       engine.getSectionStartBeatIndices(),
     );
@@ -768,6 +796,9 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
     });
     engineRef.current = engine;
     autocanonizerRef.current?.setAnalysis(analysisData, analysisData.track?.duration);
+    if (activeLoopRangeRef.current) {
+      autocanonizerRef.current?.setLoopRange(activeLoopRangeRef.current);
+    }
 
     syncVizDataFromEngine();
     vizControllerRef.current?.setOnSelect((index) => {
@@ -1473,6 +1504,44 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
     cowbellOverlayRef.current?.setVolume(volume);
   };
 
+  const onSelectLoopRange = (range: LoopRange | null) => {
+    setActiveLoopRange(range);
+    activeLoopRangeRef.current = range;
+    engineRef.current?.setLoopRange(range);
+    autocanonizerRef.current?.setLoopRange(range);
+    vizControllerRef.current?.setLoopRange(range);
+
+    if (range && analysis?.beats) {
+      if (playModeRef.current === "jukebox" && isRunningRef.current) {
+        const curBeat = lastBeatRef.current;
+        if (
+          curBeat !== null &&
+          (curBeat < range.startBeatIndex || curBeat >= range.endBeatIndex)
+        ) {
+          startFromBeat(range.startBeatIndex);
+        }
+      } else if (
+        playModeRef.current === "autocanonizer" &&
+        autocanonizerRef.current?.isPlaying()
+      ) {
+        autocanonizerRef.current?.startAtIndex(range.startBeatIndex);
+      }
+    }
+  };
+
+  const activeLoopSectionName = React.useMemo(() => {
+    if (!activeLoopRange) return "";
+    const match = trackSections.find(
+      (s) =>
+        s.startBeatIndex === activeLoopRange.startBeatIndex &&
+        s.endBeatIndex === activeLoopRange.endBeatIndex,
+    );
+    if (match) {
+      return `Section ${match.index + 1}`;
+    }
+    return `Beats ${activeLoopRange.startBeatIndex}–${activeLoopRange.endBeatIndex}`;
+  }, [activeLoopRange, trackSections]);
+
   const onAutocanonizerStreamPanChange = (
     stream: "main" | "other",
     value: number,
@@ -1676,7 +1745,7 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
             finishOutSong={finishOutSong}
             onFinishOutSongChange={setFinishOutSong}
           />
-          {forceBranchActive || freezeBeatActive ? (
+          {forceBranchActive || freezeBeatActive || activeLoopRange ? (
             <div className="modifier-badges" role="status" aria-live="polite">
               {forceBranchActive ? (
                 <span className="modifier-badge">
@@ -1687,6 +1756,27 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
                 <span className="modifier-badge">
                   {t("listen.freezeBeatBadge")}
                 </span>
+              ) : null}
+              {activeLoopRange ? (
+                <button
+                  type="button"
+                  className="modifier-badge loop-badge"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    borderColor: "rgba(56, 189, 248, 0.6)",
+                    color: "#38bdf8",
+                    background: "rgba(56, 189, 248, 0.15)",
+                    cursor: "pointer",
+                  }}
+                  onClick={() => onSelectLoopRange(null)}
+                  title={t("listen.clearLoop", "Click to turn off loop")}
+                >
+                  <SymbolIcon name="repeat" className="loop-icon" />
+                  <span>Loop: {activeLoopSectionName}</span>
+                  <span style={{ marginLeft: "4px", opacity: 0.7 }}>✕</span>
+                </button>
               ) : null}
             </div>
           ) : null}
@@ -1721,6 +1811,16 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
               />
             </div>
             <div className="viz-bottom-right">
+              <SectionLoopPopover
+                isOpen={isLoopOpen}
+                panelRef={loopPanelRef}
+                buttonRef={loopButtonRef}
+                sections={trackSections}
+                activeLoopRange={activeLoopRange}
+                totalBeats={analysis?.beats?.length ?? 0}
+                onSelectLoopRange={onSelectLoopRange}
+                onToggle={toggleLoop}
+              />
               {playMode === "autocanonizer" ? (
                 <PanPopover
                   isOpen={isPanOpen}

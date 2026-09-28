@@ -1,4 +1,4 @@
-import { Edge, JukeboxConfig, JukeboxGraphState, QuantumBase } from "./types";
+import { Edge, JukeboxConfig, JukeboxGraphState, LoopRange, QuantumBase } from "./types";
 
 export interface BranchState {
   curRandomBranchChance: number;
@@ -247,7 +247,8 @@ export function selectNextBeatIndex(
   rng: () => number,
   state: BranchState,
   forceBranch = false,
-  userAnchor: UserAnchorSelection | null = null
+  userAnchor: UserAnchorSelection | null = null,
+  loopRange: LoopRange | null = null,
 ): { index: number; jumped: boolean } {
   if (seed.neighbors.length === 0) {
     return { index: seed.which, jumped: false };
@@ -255,15 +256,42 @@ export function selectNextBeatIndex(
   const userAnchorIndex =
     userAnchor === null
       ? -1
-      : seed.neighbors.findIndex((edge) => edge.id === userAnchor.edgeId);
-  const candidateIndexes =
-    userAnchor !== null && seed.which < userAnchor.sourceIndex
-      ? seed.neighbors
-          .map((edge, index) =>
-            edge.dest.which < userAnchor.sourceIndex ? index : -1,
-          )
-          .filter((index) => index >= 0)
-      : undefined;
+      : seed.neighbors.findIndex((edge) => {
+          if (edge.id !== userAnchor.edgeId) {
+            return false;
+          }
+          if (loopRange !== null) {
+            return (
+              edge.dest.which >= loopRange.startBeatIndex &&
+              edge.dest.which <= loopRange.endBeatIndex
+            );
+          }
+          return true;
+        });
+
+  let candidateIndexes: number[] | undefined;
+  if (userAnchor !== null && seed.which < userAnchor.sourceIndex) {
+    candidateIndexes = seed.neighbors
+      .map((edge, index) =>
+        edge.dest.which < userAnchor.sourceIndex ? index : -1,
+      )
+      .filter((index) => index >= 0);
+  }
+  if (loopRange !== null) {
+    const loopIndices = seed.neighbors
+      .map((edge, index) =>
+        edge.dest.which >= loopRange.startBeatIndex &&
+        edge.dest.which <= loopRange.endBeatIndex
+          ? index
+          : -1,
+      )
+      .filter((index) => index >= 0);
+
+    candidateIndexes =
+      candidateIndexes !== undefined
+        ? candidateIndexes.filter((idx) => loopIndices.includes(idx))
+        : loopIndices;
+  }
   if (
     userAnchorIndex < 0 &&
     candidateIndexes?.length === 0
@@ -290,6 +318,7 @@ export function selectNextBeatIndex(
     nextEdge = selected[0];
   } else if (
     userAnchor === null &&
+    loopRange === null &&
     graph.lastBranchPoint >= 0 &&
     (seed.which === graph.lastBranchPoint ||
       (seed.which > graph.lastBranchPoint &&
@@ -304,7 +333,7 @@ export function selectNextBeatIndex(
       rng,
       state,
       candidateIndexes,
-      graph.lastBranchPoint > 0 ? graph.lastBranchPoint : undefined,
+      loopRange === null && graph.lastBranchPoint > 0 ? graph.lastBranchPoint : undefined,
     );
     if (selectedIndex < 0) {
       return { index: seed.which, jumped: false };

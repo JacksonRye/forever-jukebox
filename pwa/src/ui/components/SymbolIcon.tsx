@@ -15,7 +15,11 @@ type SymbolName =
   | "help"
   | "science"
   | "hourglass_top"
-  | "settings";
+  | "settings"
+  | "repeat"
+  | "repeat_one"
+  | "check"
+  | "expand_more";
 
 type SymbolIconProps = {
   name: SymbolName;
@@ -143,6 +147,29 @@ export function SymbolIcon({ name, className }: SymbolIconProps) {
           <circle cx="12" cy="12" r="3" />
           <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" />
         </>
+      ) : null}
+      {name === "repeat" ? (
+        <>
+          <polyline points="17 1 21 5 17 9" />
+          <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+          <polyline points="7 23 3 19 7 15" />
+          <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+        </>
+      ) : null}
+      {name === "repeat_one" ? (
+        <>
+          <polyline points="17 1 21 5 17 9" />
+          <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+          <polyline points="7 23 3 19 7 15" />
+          <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+          <path d="M11 10h1v4" />
+        </>
+      ) : null}
+      {name === "check" ? (
+        <polyline points="20 6 9 17 4 12" />
+      ) : null}
+      {name === "expand_more" ? (
+        <polyline points="6 9 12 15 18 9" />
       ) : null}
     </svg>
   );

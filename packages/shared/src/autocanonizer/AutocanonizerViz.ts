@@ -63,6 +63,7 @@ export class AutocanonizerViz {
   private lastOtherCursor: { x: number; y: number } | null = null;
   private otherAnimEndedAt: number | null = null;
   private rafId: number | null = null;
+  private loopRange: { startBeatIndex: number; endBeatIndex: number } | null = null;
 
   private layoutMetrics = {
     width: 0,
@@ -160,6 +161,12 @@ export class AutocanonizerViz {
 
   setOnSelect(handler: ((index: number) => void) | null) {
     this.onSelect = handler;
+  }
+
+  setLoopRange(range: { startBeatIndex: number; endBeatIndex: number } | null) {
+    this.loopRange = range;
+    this.drawBase();
+    this.drawOverlay();
   }
 
   private applyCanvasStyles() {
@@ -350,6 +357,24 @@ export class AutocanonizerViz {
       );
       this.baseCtx.stroke();
       this.baseCtx.restore();
+    }
+    if (this.loopRange && this.layouts.length) {
+      const startIdx = Math.max(0, Math.min(this.loopRange.startBeatIndex, this.layouts.length - 1));
+      const endIdx = Math.max(startIdx, Math.min(this.loopRange.endBeatIndex, this.layouts.length - 1));
+      const startLayout = this.layouts[startIdx];
+      const endLayout = this.layouts[endIdx];
+      if (startLayout && endLayout) {
+        const loopStartX = startLayout.x;
+        const loopEndX = endLayout.x + endLayout.width;
+        const loopW = Math.max(4, loopEndX - loopStartX);
+        this.baseCtx.save();
+        this.baseCtx.fillStyle = "rgba(59, 130, 246, 0.22)";
+        this.baseCtx.strokeStyle = "#38bdf8";
+        this.baseCtx.lineWidth = 2;
+        this.baseCtx.fillRect(loopStartX, topPad, loopW, tileHeight);
+        this.baseCtx.strokeRect(loopStartX, topPad, loopW, tileHeight);
+        this.baseCtx.restore();
+      }
     }
   }
 

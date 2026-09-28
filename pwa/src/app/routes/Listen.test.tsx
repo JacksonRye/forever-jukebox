@@ -344,6 +344,9 @@ vi.mock("@forever-jukebox/shared", async (importOriginal) => ({
     getSectionStartBeatIndices() {
       return [];
     }
+    setLoopRange = vi.fn();
+    getLoopRange = vi.fn(() => null);
+    getSectionsWithBeats = vi.fn(() => []);
   },
 }));
 
@@ -353,6 +356,8 @@ vi.mock("@forever-jukebox/shared/viz/JukeboxController", () => ({
     constructor(_layer: HTMLElement) {
       jukeboxControllerInstances.push(this);
     }
+    setLoopRange = vi.fn();
+    getLoopRange = vi.fn(() => null);
     setActiveIndex = vi.fn((_index: number) => undefined);
     setVisible = vi.fn((_visible: boolean) => undefined);
     setAnchorHighlightEnabled = vi.fn((_enabled: boolean) => undefined);
@@ -429,6 +434,8 @@ vi.mock("@forever-jukebox/shared/autocanonizer/AutocanonizerController", () => (
       (_analysis: unknown, _durationOverride?: number | null) => undefined,
     );
     resetVisualization = vi.fn();
+    setLoopRange = vi.fn();
+    getLoopRange = vi.fn(() => null);
     isReady() {
       return true;
     }
@@ -2044,4 +2051,36 @@ describe("Listen route behavior", () => {
     rendered.unmount();
   });
 
+  it("toggles section loop popover and selects section loop range", async () => {
+    const rendered = renderListen();
+    await settleEffects();
+
+    const loopBtn = getRequired<HTMLButtonElement>(
+      rendered.container,
+      "#section-loop-button",
+    );
+    expect(loopBtn).toBeTruthy();
+
+    // Open popover
+    await click(loopBtn);
+    const loopPanel = getRequired<HTMLDivElement>(
+      rendered.container,
+      ".section-loop-panel",
+    );
+    expect(loopPanel.classList.contains("is-hidden")).toBe(false);
+
+    // Select Whole Song (off)
+    const wholeSongBtn = getRequired<HTMLButtonElement>(
+      rendered.container,
+      ".section-loop-item",
+    );
+    await click(wholeSongBtn);
+
+    // Close popover
+    await click(loopBtn);
+    expect(loopPanel.classList.contains("is-hidden")).toBe(true);
+    rendered.unmount();
+  });
+
 });
+

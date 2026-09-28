@@ -12,6 +12,7 @@ vi.mock("./AutocanonizerViz", () => ({
     destroy() {}
     update() {}
     setOtherIndex() {}
+    setLoopRange() {}
   },
 }));
 
@@ -266,5 +267,53 @@ describe("AutocanonizerController", () => {
     expect(controller.isPlaying()).toBe(false);
 
     expect(stateChanges).toEqual([true, false]);
+  });
+
+  it("handles section loop range correctly and wraps around to start beat", () => {
+    vi.useFakeTimers();
+    const controller = new AutocanonizerController({} as HTMLElement);
+    const b0 = createBeat(0, 0);
+    const b1 = createBeat(1, 10);
+    const b2 = createBeat(2, 20);
+    const b3 = createBeat(3, 30);
+    b0.next = b1; b1.prev = b0;
+    b1.next = b2; b2.prev = b1;
+    b2.next = b3; b3.prev = b2;
+    b0.other = b0; b1.other = b1; b2.other = b2; b3.other = b3;
+
+    const player = {
+      reset: vi.fn(),
+      stop: vi.fn(),
+      stopMain: vi.fn(),
+      playBeat: vi.fn(() => 0.1),
+    };
+    const inner = controller as unknown as {
+      beats: CanonizerBeat[];
+      player: typeof player;
+    };
+    inner.beats = [b0, b1, b2, b3];
+    inner.player = player;
+
+    const onBeat = vi.fn();
+    controller.setOnBeat(onBeat);
+
+    expect(controller.getLoopRange()).toBeNull();
+    controller.setLoopRange({ startBeatIndex: 1, endBeatIndex: 2 });
+    expect(controller.getLoopRange()).toEqual({
+      startBeatIndex: 1,
+      endBeatIndex: 2,
+    });
+
+    // Start at beat 1, advance through beat 2 and wrap back to beat 1
+    controller.startAtIndex(1);
+    vi.advanceTimersByTime(250);
+    controller.stop();
+
+    const beatIndexes = onBeat.mock.calls.map((call) => call[0]);
+    // Beat sequence should be 1 -> 2 -> wraps back to 1
+    expect(beatIndexes).toEqual([1, 2, 1]);
+
+    controller.setLoopRange(null);
+    expect(controller.getLoopRange()).toBeNull();
   });
 });

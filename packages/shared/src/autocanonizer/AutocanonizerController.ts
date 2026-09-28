@@ -1,4 +1,4 @@
-import type { QuantumBase, Segment } from "../engine/types";
+import type { LoopRange, QuantumBase, Segment } from "../engine/types";
 import { normalizeAnalysis } from "../engine/analysis";
 import { AutocanonizerViz, type CanonizerBeat } from "./AutocanonizerViz";
 import {
@@ -304,6 +304,7 @@ export class AutocanonizerController {
   private onPlaybackStateChange: ((isPlaying: boolean) => void) | null = null;
   private playbackRate = 1;
   private destinationNode: AudioNode | null = null;
+  private loopRange: LoopRange | null = null;
 
   constructor(container: HTMLElement) {
     this.viz = new AutocanonizerViz(container);
@@ -485,8 +486,28 @@ export class AutocanonizerController {
     return Boolean(this.player && this.beats.length);
   }
 
+  setLoopRange(range: LoopRange | null) {
+    if (!range) {
+      this.loopRange = null;
+      this.viz.setLoopRange(null);
+      return;
+    }
+    const maxIndex = Math.max(0, this.beats.length - 1);
+    const start = Math.max(0, Math.min(range.startBeatIndex, maxIndex));
+    const end = Math.max(start, Math.min(range.endBeatIndex, maxIndex));
+    this.loopRange = { startBeatIndex: start, endBeatIndex: end };
+    this.viz.setLoopRange(this.loopRange);
+    if (this.running && (this.currentIndex < start || this.currentIndex > end)) {
+      this.selectIndex(start, true);
+    }
+  }
+
+  getLoopRange(): LoopRange | null {
+    return this.loopRange ? { ...this.loopRange } : null;
+  }
+
   start() {
-    this.startAtIndex(0);
+    this.startAtIndex(this.loopRange ? this.loopRange.startBeatIndex : 0);
   }
 
   startAtIndex(index: number) {
@@ -531,6 +552,13 @@ export class AutocanonizerController {
       this.onEnded?.();
       return;
     }
+    const loopRange = this.loopRange;
+    const startIdx = loopRange ? loopRange.startBeatIndex : 0;
+    const endIdx = loopRange ? loopRange.endBeatIndex : this.beats.length - 1;
+
+    if (this.currentIndex < startIdx || this.currentIndex > endIdx) {
+      this.currentIndex = startIdx;
+    }
     if (this.currentIndex >= this.beats.length) {
       this.running = false;
       this.onPlaybackStateChange?.(false);
@@ -538,7 +566,7 @@ export class AutocanonizerController {
       return;
     }
     const beat = this.beats[this.currentIndex];
-    const isFinal = this.currentIndex === this.beats.length - 1;
+    const isFinal = this.currentIndex >= endIdx;
     const delay = this.player.playBeat(beat);
     this.viz.update(this.currentIndex);
     this.onBeat?.(this.currentIndex, beat, {
@@ -546,15 +574,15 @@ export class AutocanonizerController {
       otherSeconds: beat.other.start,
     });
     if (isFinal) {
-      if (this.finishOutSong) {
+      if (this.finishOutSong && !loopRange) {
         this.secondaryOnly = true;
         this.secondaryIndex = beat.other.which;
         this.player.stopMain();
         this.tickSecondary();
         return;
       }
-      // Default: loop back to the top of the track.
-      this.currentIndex = 0;
+      // Default: loop back to the top of the track or section.
+      this.currentIndex = startIdx;
     } else {
       this.currentIndex += 1;
     }

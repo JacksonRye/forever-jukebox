@@ -1,5 +1,5 @@
 import type { JukeboxEngine } from "../engine";
-import type { Edge, QuantumBase } from "../engine/types";
+import type { Edge, LoopRange, QuantumBase } from "../engine/types";
 import {
   BEAT_AVOID_RADIUS_PX,
   BEAT_SELECT_RADIUS_PX,
@@ -87,6 +87,7 @@ class CanvasViz {
   private readonly edgeControlPointResolver: EdgeControlPointResolver | null;
   private visible = true;
   private anchorHighlightEnabled = false;
+  private loopRange: LoopRange | null = null;
 
   private edgeGeometry = new WeakMap<
     Edge,
@@ -155,6 +156,18 @@ class CanvasViz {
     this.updateTheme();
     this.drawBase();
     this.drawOverlay();
+  }
+
+  setLoopRange(range: LoopRange | null) {
+    this.loopRange = range;
+    if (this.visible && this.data) {
+      this.drawBase();
+      this.drawOverlay();
+    }
+  }
+
+  getLoopRange(): LoopRange | null {
+    return this.loopRange ? { ...this.loopRange } : null;
   }
 
   update(currentIndex: number, lastJumped: boolean, previousIndex: number | null) {
@@ -335,7 +348,8 @@ class CanvasViz {
         ? Math.ceil(edges.length / MAX_EDGES_BASE)
         : 1;
 
-    this.baseCtx.strokeStyle = this.theme.edgeStroke;
+    const loopRange = this.loopRange;
+
     for (let i = 0; i < edges.length; i += step) {
       const edge = edges[i];
       if (edge.deleted) {
@@ -346,6 +360,21 @@ class CanvasViz {
       if (!from || !to) {
         continue;
       }
+      const isInternal =
+        loopRange !== null &&
+        edge.src.which >= loopRange.startBeatIndex &&
+        edge.src.which <= loopRange.endBeatIndex &&
+        edge.dest.which >= loopRange.startBeatIndex &&
+        edge.dest.which <= loopRange.endBeatIndex;
+      const isExternal = loopRange !== null && !isInternal;
+
+      this.baseCtx.strokeStyle = isInternal
+        ? "rgba(56, 189, 248, 0.7)"
+        : isExternal
+          ? "rgba(74, 199, 255, 0.03)"
+          : this.theme.edgeStroke;
+      this.baseCtx.lineWidth = isInternal ? 1.7 : 1;
+
       const geometry = this.getEdgeGeometry(edge);
       if (geometry?.bend && geometry.control) {
         this.baseCtx.beginPath();
@@ -365,6 +394,32 @@ class CanvasViz {
       }
     }
 
+    if (loopRange && this.positions.length > 0) {
+      const startIdx = Math.max(
+        0,
+        Math.min(loopRange.startBeatIndex, this.positions.length - 1),
+      );
+      const endIdx = Math.max(
+        startIdx,
+        Math.min(loopRange.endBeatIndex, this.positions.length - 1),
+      );
+      this.baseCtx.save();
+      this.baseCtx.beginPath();
+      for (let i = startIdx; i <= endIdx; i += 1) {
+        const p = this.positions[i];
+        if (!p) continue;
+        if (i === startIdx) {
+          this.baseCtx.moveTo(p.x, p.y);
+        } else {
+          this.baseCtx.lineTo(p.x, p.y);
+        }
+      }
+      this.baseCtx.strokeStyle = "rgba(56, 189, 248, 0.45)";
+      this.baseCtx.lineWidth = 3.5;
+      this.baseCtx.stroke();
+      this.baseCtx.restore();
+    }
+
     const highlightedAnchorEdgeId =
       this.data.userAnchorEdgeId ??
       (this.anchorHighlightEnabled ? this.data.anchorEdgeId : null);
@@ -378,11 +433,27 @@ class CanvasViz {
       }
     }
 
-    this.baseCtx.fillStyle = this.theme.beatFill;
     for (let i = 0; i < this.positions.length; i += 1) {
       const p = this.positions[i];
+      if (!p) continue;
       this.baseCtx.beginPath();
-      this.baseCtx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+      if (loopRange) {
+        const inLoop =
+          i >= loopRange.startBeatIndex && i <= loopRange.endBeatIndex;
+        if (i === loopRange.startBeatIndex || i === loopRange.endBeatIndex) {
+          this.baseCtx.fillStyle = "#38bdf8";
+          this.baseCtx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+        } else if (inLoop) {
+          this.baseCtx.fillStyle = "#7dd3fc";
+          this.baseCtx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+        } else {
+          this.baseCtx.fillStyle = "rgba(255, 215, 130, 0.2)";
+          this.baseCtx.arc(p.x, p.y, 1.5, 0, Math.PI * 2);
+        }
+      } else {
+        this.baseCtx.fillStyle = this.theme.beatFill;
+        this.baseCtx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+      }
       this.baseCtx.fill();
     }
     this.baseCtx.restore();
@@ -986,6 +1057,7 @@ export class JukeboxViz {
   private selectedEdge: Edge | null = null;
   private lastUpdate: LastUpdate | null = null;
   private anchorHighlightEnabled = false;
+  private loopRange: LoopRange | null = null;
   private onSelectHandler: ((index: number) => void) | null = null;
   private onEdgeSelectHandler: ((edge: Edge | null) => void) | null = null;
 
@@ -1046,6 +1118,9 @@ export class JukeboxViz {
     }
     if (this.selectedEdge) {
       viz.setSelectedEdge(this.selectedEdge);
+    }
+    if (this.loopRange) {
+      viz.setLoopRange(this.loopRange);
     }
     if (this.lastUpdate) {
       viz.update(
@@ -1144,6 +1219,15 @@ export class JukeboxViz {
   setSelectedEdgeActive(edge: Edge | null) {
     this.selectedEdge = edge;
     this.activeViz?.setSelectedEdge(edge);
+  }
+
+  setLoopRange(range: LoopRange | null) {
+    this.loopRange = range;
+    this.activeViz?.setLoopRange(range);
+  }
+
+  getLoopRange(): LoopRange | null {
+    return this.loopRange ? { ...this.loopRange } : null;
   }
 }
 
