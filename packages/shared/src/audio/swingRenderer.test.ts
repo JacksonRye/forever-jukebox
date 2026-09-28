@@ -118,4 +118,68 @@ describe("renderSwingChannels", () => {
     expect(rendered?.[67]).toBeLessThan(1);
     expect(rendered?.[71]).toBe(1);
   });
+
+  it("gracefully falls back to linear resampling if adapter stretch fails on a segment", async () => {
+    const failingAdapter: TimeStretchAdapter = {
+      stretchSegment: () => {
+        throw new Error("Simulated Rubber Band worker crash on problematic beat");
+      },
+    };
+    const source = Float32Array.from({ length: 100 }, (_, index) => index);
+
+    // Must not throw, and should return a complete rendered buffer
+    const [rendered] = await renderSwingChannels(
+      [source],
+      100,
+      [{ start: 0, duration: 1 }],
+      { adapter: failingAdapter },
+    );
+
+    expect(rendered).toHaveLength(100);
+    // Linear resample should have filled values
+    expect(Number.isFinite(rendered?.[0])).toBe(true);
+    expect(Number.isFinite(rendered?.[50])).toBe(true);
+    expect(Number.isFinite(rendered?.[99])).toBe(true);
+  });
+
+  it("gracefully handles invalid, NaN, or non-finite beats without failing", async () => {
+    const adapter = new FakeStretchAdapter();
+    const source = Float32Array.from({ length: 100 }, (_, index) => index);
+
+    const [rendered] = await renderSwingChannels(
+      [source],
+      100,
+      [
+        { start: NaN, duration: NaN },
+        { start: 0, duration: -5 },
+        { start: 0, duration: 0 },
+        { start: 0.2, duration: 0.4 },
+      ],
+      { adapter },
+    );
+
+    expect(rendered).toHaveLength(100);
+    // Only the valid beat should have been passed to the adapter
+    expect(adapter.calls).toHaveLength(2);
+  });
+
+  it("clamps beats that extend slightly past source buffer length", async () => {
+    const adapter = new FakeStretchAdapter();
+    const source = Float32Array.from({ length: 100 }, (_, index) => index);
+
+    // Audio is 1.0s (100 frames at 100Hz), beat ends at 1.1s (110 frames)
+    const [rendered] = await renderSwingChannels(
+      [source],
+      100,
+      [{ start: 0.8, duration: 0.3 }],
+      { adapter },
+    );
+
+    expect(rendered).toHaveLength(100);
+    // The beat starts at 80 and ends clamped at 100 (20 frames total)
+    expect(adapter.calls).toEqual([
+      { inputFrames: 10, targetFrameCount: 13 },
+      { inputFrames: 10, targetFrameCount: 7 },
+    ]);
+  });
 });

@@ -73,6 +73,11 @@ async function stretchSegment(request: StretchRequest): Promise<Float32Array[]> 
     return request.channels.map((channel) => new Float32Array(channel));
   }
 
+  const timeRatio = request.targetFrameCount / inputFrames;
+  if (!Number.isFinite(timeRatio) || timeRatio <= 0) {
+    return fitChannelsToFrameCount(request.channels, request.targetFrameCount);
+  }
+
   const rbApi = await getRubberBand();
   const options =
     RubberBandOption.RubberBandOptionProcessOffline |
@@ -82,7 +87,6 @@ async function stretchSegment(request: StretchRequest): Promise<Float32Array[]> 
     RubberBandOption.RubberBandOptionPhaseLaminar |
     RubberBandOption.RubberBandOptionPitchHighQuality |
     RubberBandOption.RubberBandOptionChannelsTogether;
-  const timeRatio = request.targetFrameCount / inputFrames;
   const rbState = rbApi.rubberband_new(
     request.sampleRate,
     request.channels.length,
@@ -90,6 +94,11 @@ async function stretchSegment(request: StretchRequest): Promise<Float32Array[]> 
     timeRatio,
     1,
   );
+  if (!rbState) {
+    throw new Error(
+      `Rubber Band initialization failed for sampleRate=${request.sampleRate}, channels=${request.channels.length}, timeRatio=${timeRatio}`,
+    );
+  }
   let channelArrayPtr = 0;
   let channelDataPtrs: number[] = [];
 
@@ -100,14 +109,21 @@ async function stretchSegment(request: StretchRequest): Promise<Float32Array[]> 
 
     const chunkFrames = Math.max(1, rbApi.rubberband_get_samples_required(rbState));
     channelArrayPtr = rbApi.malloc(request.channels.length * 4);
+    if (!channelArrayPtr) {
+      throw new Error("Rubber Band malloc failed for channel array pointer");
+    }
     channelDataPtrs = request.channels.map((channel, index) => {
       const ptr = rbApi.malloc(Math.max(chunkFrames, channel.length) * 4);
+      if (!ptr) {
+        throw new Error(`Rubber Band malloc failed for channel data ${index}`);
+      }
       rbApi.memWritePtr(channelArrayPtr + index * 4, ptr);
       return ptr;
     });
 
     const chunks = request.channels.map(() => [] as Float32Array[]);
     const retrieve = (final: boolean) => {
+      let stallCount = 0;
       for (;;) {
         const available = rbApi.rubberband_available(rbState);
         if (available < 1) {
@@ -122,6 +138,14 @@ async function stretchSegment(request: StretchRequest): Promise<Float32Array[]> 
           channelArrayPtr,
           wanted,
         );
+        if (received <= 0) {
+          stallCount += 1;
+          if (stallCount > 5) {
+            break;
+          }
+          continue;
+        }
+        stallCount = 0;
         channelDataPtrs.forEach((ptr, channelIndex) => {
           chunks[channelIndex]?.push(new Float32Array(rbApi.memReadF32(ptr, received)));
         });

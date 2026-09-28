@@ -85,12 +85,18 @@ export class RubberBandWorkerAdapter implements TimeStretchAdapter {
       }
       pending.resolve(response.channels);
     };
-    this.worker.onerror = () => {
-      const err = new Error("Rubber Band worker failed");
+    this.worker.onerror = (event: ErrorEvent) => {
+      const err = new Error(
+        event.message ? `Rubber Band worker failed: ${event.message}` : "Rubber Band worker failed",
+      );
       for (const pending of this.pending.values()) {
         pending.reject(err);
       }
       this.pending.clear();
+      if (this.worker) {
+        this.worker.terminate();
+        this.worker = null;
+      }
     };
     return this.worker;
   }

@@ -96,11 +96,20 @@ export async function renderSwingChannels(
             segment.inputStartFrame + segment.inputFrameCount,
           ),
         );
-        const stretched = await adapter.stretchSegment(
-          inputChannels,
-          sampleRate,
-          segment.outputFrameCount,
-        );
+        let stretched: Float32Array[];
+        try {
+          stretched = await adapter.stretchSegment(
+            inputChannels,
+            sampleRate,
+            segment.outputFrameCount,
+          );
+        } catch (segmentErr) {
+          console.warn(
+            `Adapter stretch failed for segment at frame ${segment.inputStartFrame}, falling back to linear resample:`,
+            segmentErr,
+          );
+          stretched = fallbackResampleSegment(inputChannels, segment.outputFrameCount);
+        }
         writeSegment(outputChannels, stretched, segment.outputStartFrame);
         completedSegments += 1;
         options.onProgress?.(
@@ -227,26 +236,64 @@ function applyJoinFade(
   });
 }
 
+function fallbackResampleSegment(
+  channels: Float32Array[],
+  targetFrameCount: number,
+): Float32Array[] {
+  return channels.map((channel) => {
+    if (channel.length === targetFrameCount) {
+      return new Float32Array(channel);
+    }
+    const output = new Float32Array(targetFrameCount);
+    if (channel.length === 0 || targetFrameCount === 0) {
+      return output;
+    }
+    const ratio = channel.length / targetFrameCount;
+    for (let i = 0; i < targetFrameCount; i += 1) {
+      const srcIndex = i * ratio;
+      const idx = Math.floor(srcIndex);
+      const frac = srcIndex - idx;
+      const s0 = channel[idx] ?? 0;
+      const s1 = channel[idx + 1] ?? s0;
+      output[i] = s0 + (s1 - s0) * frac;
+    }
+    return output;
+  });
+}
+
 function getBeatFrameSegments(
   beat: BeatLike,
   sampleRate: number,
   sourceLength: number,
   swingAmount: number,
 ): [FrameSegment, FrameSegment] | null {
-  const beatStartFrame = Math.round(beat.start * sampleRate);
-  const beatEndFrame = Math.round((beat.start + beat.duration) * sampleRate);
   if (
-    beatStartFrame < 0 ||
-    beatEndFrame > sourceLength ||
-    beatEndFrame - beatStartFrame < 2
+    !Number.isFinite(beat.start) ||
+    !Number.isFinite(beat.duration) ||
+    beat.duration <= 0 ||
+    !Number.isFinite(sampleRate) ||
+    sampleRate <= 0 ||
+    sourceLength <= 0
   ) {
+    return null;
+  }
+
+  const rawStart = Math.round(beat.start * sampleRate);
+  const rawEnd = Math.round((beat.start + beat.duration) * sampleRate);
+  const beatStartFrame = Math.max(0, Math.min(sourceLength, rawStart));
+  const beatEndFrame = Math.max(beatStartFrame, Math.min(sourceLength, rawEnd));
+  if (beatEndFrame - beatStartFrame < 2) {
     return null;
   }
 
   const beatFrameCount = beatEndFrame - beatStartFrame;
   const inputAFrameCount = Math.floor(beatFrameCount / 2);
   const inputBFrameCount = beatFrameCount - inputAFrameCount;
-  const [segmentA] = getSwingSegmentsForBeat(beat, swingAmount);
+  const effectiveBeat: BeatLike = {
+    start: beatStartFrame / sampleRate,
+    duration: beatFrameCount / sampleRate,
+  };
+  const [segmentA] = getSwingSegmentsForBeat(effectiveBeat, swingAmount);
   const outputAFrameCount = Math.max(
     1,
     Math.min(

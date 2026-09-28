@@ -985,7 +985,7 @@ export function Listen({ isActive = true }: { isActive?: boolean }) {
         if (swingRenderTokenRef.current !== renderToken) {
           return;
         }
-        console.warn(`Swing render failed: ${String(err)}`);
+        console.error("Swing render failed:", err);
         resetAudioModeToOff(player);
         showShortcutToast(t("listen.swingFailed"));
       });

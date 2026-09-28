@@ -26,7 +26,8 @@ export function getSwingSegmentsForBeat(
   beat: BeatLike,
   swingAmount = DEFAULT_SWING_AMOUNT,
 ): [SwingSegment, SwingSegment] {
-  const duration = Math.max(0, beat.duration);
+  const safeStart = Number.isFinite(beat.start) ? beat.start : 0;
+  const duration = Number.isFinite(beat.duration) ? Math.max(0, beat.duration) : 0;
   const half = duration / 2;
   const swing = clampSwingAmount(swingAmount);
 
@@ -37,13 +38,13 @@ export function getSwingSegmentsForBeat(
 
   return [
     {
-      inputStart: beat.start,
+      inputStart: safeStart,
       inputDuration: half,
       outputDuration: outputADuration,
       playbackRate: half / safeOutputADuration,
     },
     {
-      inputStart: beat.start + half,
+      inputStart: safeStart + half,
       inputDuration: half,
       outputDuration: outputBDuration,
       playbackRate: half / safeOutputBDuration,
