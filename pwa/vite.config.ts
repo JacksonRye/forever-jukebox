@@ -13,7 +13,7 @@ const execFileAsync = promisify(execFile);
 
 export default defineConfig(({ command }) => {
   const isDev = command === "serve";
-  const appBase = isDev ? "/" : "/offline/";
+  const appBase = process.env.VITE_BASE || (isDev ? "/" : "/jukebox/");
   const scriptSrc = isDev
     ? "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval';"
     : "script-src 'self' 'wasm-unsafe-eval';";
@@ -57,11 +57,9 @@ export default defineConfig(({ command }) => {
           return html.replace("__PWA_CSP__", csp);
         },
       },
-      {
-        name: "local-audio-serve",
-        configureServer(server) {
-          server.middlewares.use(async (req, res, next) => {
-            if (req.url && req.url.startsWith("/api/local-audio")) {
+      (() => {
+        const middleware = async (req: any, res: any, next: any) => {
+            if (req.url && (req.url.startsWith("/api/local-audio") || req.url.startsWith("/jukebox/api/local-audio"))) {
               const url = new URL(req.url, "http://localhost:5174");
               const trackName = url.searchParams.get("name") || "";
               const fingerprint = url.searchParams.get("fingerprint") || "";
@@ -129,7 +127,7 @@ export default defineConfig(({ command }) => {
               return;
             }
 
-            if (req.url && req.url.startsWith("/api/spotify/resolve")) {
+            if (req.url && (req.url.startsWith("/api/spotify/resolve") || req.url.startsWith("/jukebox/api/spotify/resolve"))) {
               const url = new URL(req.url, "http://localhost:5174");
               const rawInput = url.searchParams.get("url") || "";
               res.setHeader("Content-Type", "application/json");
@@ -254,7 +252,7 @@ export default defineConfig(({ command }) => {
               }
             }
 
-            if (req.url && req.url.startsWith("/api/spotify/audio")) {
+            if (req.url && (req.url.startsWith("/api/spotify/audio") || req.url.startsWith("/jukebox/api/spotify/audio"))) {
               const url = new URL(req.url, "http://localhost:5174");
               const trackId = url.searchParams.get("id") || "track";
               const title = url.searchParams.get("title") || "";
@@ -352,9 +350,17 @@ export default defineConfig(({ command }) => {
             }
 
             next();
-          });
-        },
-      },
+        };
+        return {
+          name: "local-audio-serve",
+          configureServer(server: any) {
+            server.middlewares.use(middleware);
+          },
+          configurePreviewServer(server: any) {
+            server.middlewares.use(middleware);
+          },
+        };
+      })(),
       react(),
       VitePWA({
         injectRegister: null,

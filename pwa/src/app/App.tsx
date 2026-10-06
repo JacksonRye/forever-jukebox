@@ -78,6 +78,27 @@ function InstallGate({ canInstall, promptInstall }: InstallGateProps) {
         <div className="install-gate__option install-gate__option--secondary">
           {secondary}
         </div>
+        <div style={{ marginTop: "1.5rem", borderTop: "1px solid rgba(212, 175, 55, 0.2)", paddingTop: "1.25rem", textAlign: "center" }}>
+          <button
+            className="tab-btn install-gate__action"
+            type="button"
+            style={{
+              background: "linear-gradient(135deg, rgba(212, 175, 55, 0.25) 0%, rgba(212, 175, 55, 0.1) 100%)",
+              borderColor: "#d4af37",
+              color: "#f5d77f",
+              fontWeight: 600,
+              letterSpacing: "0.08em",
+              padding: "0.75rem 1.75rem",
+              cursor: "pointer",
+            }}
+            onClick={() => {
+              sessionStorage.setItem("fj_gate_unlocked", "1");
+              window.location.reload();
+            }}
+          >
+            OPEN WEB PLAYER
+          </button>
+        </div>
       </section>
     </div>
   );

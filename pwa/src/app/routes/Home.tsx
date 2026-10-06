@@ -108,7 +108,8 @@ export function Home() {
         name: track.title || track.artist || "",
         fingerprint: track.fingerprint,
       });
-      const res = await fetch(`/api/local-audio?${query.toString()}`);
+      const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const res = await fetch(`${base}/api/local-audio?${query.toString()}`);
       if (res.ok) {
         const blob = await res.blob();
         const filenameHeader = res.headers.get("X-Filename");

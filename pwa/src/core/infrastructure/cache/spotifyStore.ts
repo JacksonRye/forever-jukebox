@@ -54,7 +54,8 @@ export function clearSavedSpotifyPlaylist(): void {
 
 export async function resolveSpotifyLink(input: string): Promise<SpotifyPlaylistEntity> {
   const query = new URLSearchParams({ url: input.trim() });
-  const response = await fetch(`/api/spotify/resolve?${query.toString()}`);
+  const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const response = await fetch(`${base}/api/spotify/resolve?${query.toString()}`);
   if (!response.ok) {
     let errMessage = "Could not resolve Spotify link";
     try {
@@ -94,7 +95,8 @@ export async function fetchSpotifyTrackAudio(track: SpotifyTrackItem): Promise<F
     params.set("previewUrl", track.previewUrl);
   }
 
-  const response = await fetch(`/api/spotify/audio?${params.toString()}`);
+  const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const response = await fetch(`${base}/api/spotify/audio?${params.toString()}`);
   if (!response.ok) {
     let errMsg = `Failed to fetch audio for "${track.title}"`;
     try {
