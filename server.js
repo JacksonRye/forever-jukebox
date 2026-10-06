@@ -416,6 +416,20 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Redirect root or /jukebox to /jukebox/ for proper PWA base resolution
+  if (pathname === "/jukebox") {
+    res.statusCode = 301;
+    res.setHeader("Location", "/jukebox/");
+    res.end();
+    return;
+  }
+  if (pathname === "/" || pathname === "") {
+    res.statusCode = 302;
+    res.setHeader("Location", "/jukebox/");
+    res.end();
+    return;
+  }
+
   // Normalize path for static assets
   let subPath = pathname;
   if (subPath.startsWith("/jukebox")) {
